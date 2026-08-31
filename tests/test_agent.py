@@ -1,27 +1,12 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
 from typing import Any
 
 import pytest
 
-from corewarden.agent import INVESTIGATION_PROMPT, SYSTEM_PROMPT, build_agent, diagnose
+from corewarden.agent import INVESTIGATION_PROMPT, SYSTEM_PROMPT, diagnose
 from corewarden.models import Classification, Diagnosis, Evidence
-
-
-@dataclass
-class Result:
-    structured_output: Any
-
-
-class FakeAgent:
-    def __init__(self, output: Any) -> None:
-        self.output = output
-        self.calls: list[tuple[str, dict[str, Any]]] = []
-
-    def __call__(self, prompt: str, **kwargs: Any) -> Result:
-        self.calls.append((prompt, kwargs))
-        return Result(self.output)
+from corewarden.rpc import CoreRpcNodeAdapter
 
 
 class FakeNode:
@@ -32,7 +17,7 @@ class FakeNode:
         return {"networkactive": True, "connections": 2}
 
     def get_peer_information(self) -> list[dict[str, Any]]:
-        return [{"id": 1, "synced_blocks": 10}]
+        return [{"synced_blocks": 10}]
 
     def get_chain_tips(self) -> list[dict[str, Any]]:
         return [{"height": 10, "branchlen": 0, "status": "active"}]
@@ -61,45 +46,103 @@ def sample_diagnosis() -> Diagnosis:
     )
 
 
-def test_diagnose_uses_current_structured_output_invocation() -> None:
+def test_diagnostic_workflow_uses_provider_abstraction() -> None:
     expected = sample_diagnosis()
-    agent = FakeAgent(expected)
+    node = FakeNode()
+    calls: list[tuple[Any, str, str]] = []
 
-    actual = diagnose(agent)
+    class CapturingProvider:
+        def diagnose(
+            self,
+            received_node: Any,
+            *,
+            system_prompt: str,
+            investigation_prompt: str,
+        ) -> Diagnosis:
+            calls.append((received_node, system_prompt, investigation_prompt))
+            return expected
+
+    actual = diagnose(node, CapturingProvider())
 
     assert actual is expected
-    assert agent.calls == [
-        (INVESTIGATION_PROMPT, {"structured_output_model": Diagnosis})
-    ]
-
-
-def test_diagnose_rejects_missing_structured_output() -> None:
-    with pytest.raises(RuntimeError, match="no validated"):
-        diagnose(FakeAgent(None))
-
-
-def test_build_agent_receives_only_four_diagnostic_tools(monkeypatch: pytest.MonkeyPatch) -> None:
-    captured: dict[str, Any] = {}
-
-    class CapturingAgent:
-        def __init__(self, **kwargs: Any) -> None:
-            captured.update(kwargs)
-
-    monkeypatch.setattr("corewarden.agent.Agent", CapturingAgent)
-    agent = build_agent(FakeNode(), "example.model")
-
-    assert isinstance(agent, CapturingAgent)
-    assert captured["model"] == "example.model"
-    assert captured["system_prompt"] == SYSTEM_PROMPT
-    assert captured["callback_handler"] is None
-    assert [tool.tool_name for tool in captured["tools"]] == [
-        "get_blockchain_status",
-        "get_network_status",
-        "get_peer_information",
-        "get_chain_tips",
-    ]
+    assert calls == [(node, SYSTEM_PROMPT, INVESTIGATION_PROMPT)]
     assert "all four" in SYSTEM_PROMPT
     assert "block age alone" in SYSTEM_PROMPT
     assert "Blocks below headers" in SYSTEM_PROMPT
     assert "Missing or sharply degraded peers" in SYSTEM_PROMPT
     assert "network-wide" in SYSTEM_PROMPT
+
+
+def test_provider_layer_receives_only_adapter_sanitized_rpc_data() -> None:
+    class RawTransport:
+        def call(self, method: str) -> Any:
+            responses = {
+                "getpeerinfo": [
+                    {
+                        "id": 42,
+                        "addr": "192.0.2.10:8338",
+                        "addrbind": "127.0.0.1:50000",
+                        "subver": "/IdentifyingClient:1.0/",
+                        "mapped_as": 64500,
+                        "inbound": False,
+                        "synced_headers": 10,
+                        "synced_blocks": 10,
+                        "pingtime": 0.02,
+                    }
+                ],
+                "getnetworkinfo": {
+                    "networkactive": True,
+                    "connections": 1,
+                    "localaddresses": [{"address": "198.51.100.20", "port": 8338}],
+                    "networks": [
+                        {
+                            "name": "ipv4",
+                            "reachable": True,
+                            "limited": False,
+                            "proxy": "127.0.0.1:9050",
+                        }
+                    ],
+                },
+            }
+            return responses[method]
+
+    seen: dict[str, Any] = {}
+
+    class InspectingProvider:
+        def diagnose(
+            self,
+            node: Any,
+            *,
+            system_prompt: str,
+            investigation_prompt: str,
+        ) -> Diagnosis:
+            seen["peers"] = node.get_peer_information()
+            seen["network"] = node.get_network_status()
+            return sample_diagnosis()
+
+    diagnose(CoreRpcNodeAdapter(RawTransport()), InspectingProvider())
+
+    assert seen["peers"] == [
+        {"inbound": False, "synced_headers": 10, "synced_blocks": 10, "pingtime": 0.02}
+    ]
+    assert seen["network"] == {
+        "networkactive": True,
+        "connections": 1,
+        "networks": [{"name": "ipv4", "limited": False, "reachable": True}],
+    }
+
+
+def test_provider_failure_propagates_without_workflow_fallback() -> None:
+    class ProviderFailure(RuntimeError):
+        pass
+
+    failure = ProviderFailure("provider unavailable")
+
+    class FailingProvider:
+        def diagnose(self, node: Any, **kwargs: Any) -> Diagnosis:
+            raise failure
+
+    with pytest.raises(ProviderFailure) as caught:
+        diagnose(FakeNode(), FailingProvider())
+
+    assert caught.value is failure

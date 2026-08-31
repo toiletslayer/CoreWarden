@@ -60,9 +60,17 @@ def test_main_writes_redacted_diagnostic_evidence(
 
     monkeypatch.setattr("corewarden.cli.Settings.from_env", lambda: settings)
     monkeypatch.setattr("corewarden.cli.CoreRpcNodeAdapter", lambda transport: node)
-    monkeypatch.setattr("corewarden.cli.build_agent", lambda wrapped_node, model: wrapped_node)
+    provider = object()
+    selected_models: list[str] = []
 
-    def fake_diagnose(wrapped_node: Any) -> Diagnosis:
+    def fake_provider(model: str) -> object:
+        selected_models.append(model)
+        return provider
+
+    monkeypatch.setattr("corewarden.cli.StrandsBedrockProvider", fake_provider)
+
+    def fake_diagnose(wrapped_node: Any, received_provider: Any) -> Diagnosis:
+        assert received_provider is provider
         wrapped_node.get_blockchain_status()
         wrapped_node.get_network_status()
         wrapped_node.get_peer_information()
@@ -79,6 +87,7 @@ def test_main_writes_redacted_diagnostic_evidence(
     captured = capsys.readouterr()
     output = captured.out + captured.err + evidence_path.read_text(encoding="utf-8")
     assert json.loads(captured.out)["classification"] == "healthy"
+    assert selected_models == [settings.model_id]
     assert evidence_path.exists()
     assert "observer" not in output
     assert "very-secret" not in output
@@ -93,3 +102,34 @@ def test_main_reports_configuration_error_as_json(monkeypatch: Any, capsys: Any)
     assert main() == 2
     error = json.loads(capsys.readouterr().err)
     assert error == {"error": "ConfigurationError", "message": "missing endpoint"}
+
+
+def test_main_reports_provider_failure_without_leaking_details(
+    monkeypatch: Any, capsys: Any
+) -> None:
+    class ProviderFailure(Exception):
+        pass
+
+    settings = Settings(
+        rpc_url="http://127.0.0.1:8337",
+        rpc_user="observer",
+        rpc_password="very-secret",
+    )
+    monkeypatch.setattr("corewarden.cli.Settings.from_env", lambda: settings)
+    monkeypatch.setattr("corewarden.cli.CoreRpcNodeAdapter", lambda transport: LiveLikeNode())
+    monkeypatch.setattr("corewarden.cli.StrandsBedrockProvider", lambda model: object())
+
+    def fail(node: Any, provider: Any) -> Diagnosis:
+        raise ProviderFailure("very-secret provider detail")
+
+    monkeypatch.setattr("corewarden.cli.diagnose", fail)
+
+    assert main() == 2
+    captured = capsys.readouterr()
+    error = json.loads(captured.err)
+    assert error == {
+        "error": "ProviderFailure",
+        "message": "Agent or model-provider invocation failed; check AWS credentials, "
+        "model access, region, and diagnostic logs.",
+    }
+    assert "very-secret" not in captured.out + captured.err

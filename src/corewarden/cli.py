@@ -9,7 +9,8 @@ import sys
 from pydantic import ValidationError
 from strands.types.exceptions import StructuredOutputException
 
-from corewarden.agent import build_agent, diagnose
+from corewarden.agent import diagnose
+from corewarden.bedrock import StrandsBedrockProvider
 from corewarden.config import Settings
 from corewarden.diagnostics import (
     EvidenceRecorder,
@@ -39,13 +40,11 @@ def main() -> int:
         if settings.diagnostic_mode:
             recorder = EvidenceRecorder(node, settings.evidence_path, redactor)
             node = recorder
-        report = diagnose(build_agent(node, settings.model_id))
+        report = diagnose(node, StrandsBedrockProvider(settings.model_id))
     except (CoreWardenError, StructuredOutputException, ValidationError, RuntimeError) as exc:
         error = {"error": type(exc).__name__, "message": redactor.text(str(exc))}
     except Exception as exc:  # SDK/provider exception classes vary between releases.
-        logging.getLogger("corewarden").debug(
-            "Agent/provider failure type: %s", type(exc).__name__
-        )
+        logging.getLogger("corewarden").debug("Agent/provider failure type: %s", type(exc).__name__)
         error = {
             "error": type(exc).__name__,
             "message": "Agent or model-provider invocation failed; check AWS credentials, "

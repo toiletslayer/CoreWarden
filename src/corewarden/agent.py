@@ -1,14 +1,10 @@
-"""Strands agent construction and diagnosis workflow."""
+"""Provider-neutral diagnostic policy and workflow."""
 
 from __future__ import annotations
 
-from typing import Any, Protocol
-
-from strands import Agent
-
 from corewarden.models import Diagnosis
 from corewarden.node import CoreNode
-from corewarden.tools import create_diagnostic_tools
+from corewarden.provider import DiagnosisProvider
 
 SYSTEM_PROMPT = """You are CoreWarden, a cautious, read-only node-health investigator.
 
@@ -46,24 +42,10 @@ with every available tool, correlate the observations, classify the apparent hea
 validated diagnosis. This is observation only; perform no remediation."""
 
 
-class InvokableAgent(Protocol):
-    def __call__(self, prompt: str, **kwargs: Any) -> Any: ...
-
-
-def build_agent(node: CoreNode, model_id: str) -> Agent:
-    """Construct a quiet, single-purpose Strands agent."""
-    return Agent(
-        model=model_id,
+def diagnose(node: CoreNode, provider: DiagnosisProvider) -> Diagnosis:
+    """Run one investigation through the configured model provider."""
+    return provider.diagnose(
+        node,
         system_prompt=SYSTEM_PROMPT,
-        tools=create_diagnostic_tools(node),
-        callback_handler=None,
+        investigation_prompt=INVESTIGATION_PROMPT,
     )
-
-
-def diagnose(agent: InvokableAgent) -> Diagnosis:
-    """Run one investigation and return Strands' validated structured output."""
-    result = agent(INVESTIGATION_PROMPT, structured_output_model=Diagnosis)
-    structured = getattr(result, "structured_output", None)
-    if not isinstance(structured, Diagnosis):
-        raise RuntimeError("Strands returned no validated CoreWarden diagnosis")
-    return structured

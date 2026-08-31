@@ -59,16 +59,22 @@ network state and warnings, and competing or invalid chain tips.
 CLI / environment
        |
        v
-Strands Agent ---- structured output ----> Diagnosis (Pydantic)
+provider-neutral diagnostic workflow
        |
        v
-four bound diagnostic tools
+DiagnosisProvider protocol
+       |
+       v
+StrandsBedrockProvider ---- structured output ----> Diagnosis (Pydantic)
+       |
+       v
+Strands Agent + four bound diagnostic tools
        |
        v
 CoreNode protocol
        |
        v
-CoreRpcNodeAdapter
+CoreRpcNodeAdapter (privacy projection)
        |
        v
 JSON-RPC HTTP transport ----> one Core-compatible node
@@ -84,6 +90,15 @@ implement the same four RPC methods.
 The adapter name describes the RPC family, not a dependency on the Bitcoin
 mainnet. A future incompatible Core-derived RPC surface can implement `CoreNode`
 without changing the tools or agent workflow.
+
+`DiagnosisProvider` is the provider-neutral model execution boundary. The
+diagnostic workflow supplies the fixed safety policy, investigation prompt, and
+already privacy-filtered `CoreNode`; it does not import Strands or Bedrock.
+`StrandsBedrockProvider` is currently the only implementation. It constructs the
+Strands tools and agent, selects the configured Bedrock model, requests the
+existing Pydantic structured output, and preserves provider exceptions for the
+CLI's existing error handling. No alternate provider, fallback, or automatic
+provider selection is implemented.
 
 ## Safety boundary
 
@@ -129,9 +144,9 @@ are excluded.
 - AWS credentials available through boto3's normal credential chain
 - Amazon Bedrock access to the configured model
 
-Strands Agents uses Amazon Bedrock by default. CoreWarden explicitly supplies the
-configured Bedrock model ID and otherwise leaves AWS credential resolution to the
-SDK/boto3.
+The current `StrandsBedrockProvider` uses Amazon Bedrock. CoreWarden explicitly
+supplies the configured Bedrock model ID and otherwise leaves AWS credential
+resolution to the SDK/boto3.
 
 ## Setup
 
@@ -257,7 +272,9 @@ Example report shape (illustrative, not a real diagnosis):
 
 ## How the Strands tools work
 
-`create_diagnostic_tools()` closes over a `CoreNode` instance and decorates four
+The provider-neutral workflow calls a `DiagnosisProvider` with a `CoreNode` and
+the fixed CoreWarden prompts. The current `StrandsBedrockProvider` calls
+`create_diagnostic_tools()`, which closes over that node and decorates four
 parameterless Python functions with Strands' `@tool`. Their docstrings tell the
 model what evidence each tool supplies. Those four function tools are passed
 directly in `Agent(tools=[...])`.
@@ -265,7 +282,9 @@ directly in `Agent(tools=[...])`.
 The system prompt requires the agent to call all four, correlate evidence, avoid
 single-metric conclusions, and report uncertainty. The invocation passes
 `Diagnosis` through `structured_output_model`; Strands validates the model output
-and exposes it as `AgentResult.structured_output`.
+and exposes it as `AgentResult.structured_output`. Because the CLI constructs the
+provider only after the Core-compatible adapter and optional evidence recorder,
+the provider boundary cannot receive raw peer or local endpoint metadata.
 
 ## Tests
 
@@ -276,9 +295,11 @@ pytest
 Tests never contact a node or Bedrock. `FakeTransport` returns representative
 mock JSON-RPC results keyed by the exact method name. This tests the adapter's
 mapping and allow-list independently of HTTP. Separate mocked `urlopen` tests
-exercise JSON decoding and RPC/HTTP error handling. A fake invokable agent tests
-the current Strands structured-output invocation contract without making a model
-call.
+exercise JSON decoding and RPC/HTTP error handling. A mocked Strands agent tests
+the current structured-output invocation contract without making a model call.
+Provider tests separately verify the provider-neutral workflow, the current
+Strands/Bedrock construction, failure propagation, and the sanitized data visible
+at the provider boundary.
 
 ## Deliberately deferred
 
