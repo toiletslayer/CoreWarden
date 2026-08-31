@@ -20,6 +20,7 @@ classifiers = [
   "Programming Language :: Python :: 3.13",
 ]
 dependencies = [
+  "openai>=3.6,<4",
   "pydantic>=2.7,<3",
   "strands-agents>=1.54,<2",
 ]

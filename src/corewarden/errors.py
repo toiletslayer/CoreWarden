@@ -9,6 +9,10 @@ class ConfigurationError(CoreWardenError):
     """Raised when environment configuration is missing or invalid."""
 
 
+class ProviderError(CoreWardenError):
+    """Raised when a model provider fails without exposing provider details or secrets."""
+
+
 class RpcTransportError(CoreWardenError):
     """Raised when the RPC endpoint cannot be reached or decoded."""
 

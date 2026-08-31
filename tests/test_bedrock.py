@@ -6,6 +6,7 @@ from typing import Any
 import pytest
 
 from corewarden.bedrock import StrandsBedrockProvider
+from corewarden.errors import ProviderError
 from corewarden.models import Diagnosis
 from tests.test_agent import FakeNode, sample_diagnosis
 
@@ -60,32 +61,33 @@ def test_bedrock_provider_rejects_missing_structured_output(
 
     monkeypatch.setattr("corewarden.bedrock.Agent", EmptyAgent)
 
-    with pytest.raises(RuntimeError, match="Strands returned no validated"):
+    with pytest.raises(ProviderError, match="Bedrock returned no validated"):
         StrandsBedrockProvider("example.model").diagnose(
             FakeNode(), system_prompt="system", investigation_prompt="investigate"
         )
 
 
-def test_bedrock_provider_does_not_wrap_provider_failures(
+def test_bedrock_provider_normalizes_provider_failures(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     class ProviderFailure(Exception):
         pass
-
-    failure = ProviderFailure("access denied")
 
     class FailingAgent:
         def __init__(self, **kwargs: Any) -> None:
             pass
 
         def __call__(self, prompt: str, **kwargs: Any) -> Result:
-            raise failure
+            raise ProviderFailure("access denied")
 
     monkeypatch.setattr("corewarden.bedrock.Agent", FailingAgent)
 
-    with pytest.raises(ProviderFailure) as caught:
+    with pytest.raises(ProviderError) as caught:
         StrandsBedrockProvider("example.model").diagnose(
             FakeNode(), system_prompt="system", investigation_prompt="investigate"
         )
 
-    assert caught.value is failure
+    assert str(caught.value) == (
+        "Bedrock provider invocation failed; check AWS credentials, model access, "
+        "region, and diagnostic logs."
+    )
