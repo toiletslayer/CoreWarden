@@ -1,0 +1,14 @@
+.venv/
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+.env
+corewarden-evidence*.json
+# This one privacy-audited Milestone 2 artifact is intentionally versioned.
+!corewarden-evidence-live-healthy-success.json
+dist/
+build/

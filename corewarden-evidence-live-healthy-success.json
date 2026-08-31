@@ -1,0 +1,625 @@
+{
+  "allowed_rpc_methods": [
+    "getblockchaininfo",
+    "getnetworkinfo",
+    "getpeerinfo",
+    "getchaintips"
+  ],
+  "diagnosis": {
+    "classification": "healthy",
+    "confidence": 0.93,
+    "evidence": [
+      {
+        "observation": "blocks=58019, headers=58019, verificationprogress=1, initialblockdownload=false, warnings=[]",
+        "significance": "Zero gap between blocks and headers, full verification progress, and IBD flag cleared confirm the node is completely synchronized with no outstanding warnings.",
+        "source": "blockchain_status"
+      },
+      {
+        "observation": "pruned=true, automatic_pruning=true, prune_target_size=1999634432 (~1.86 GB), pruneheight=0",
+        "significance": "Node is intentionally pruned. This directly explains NETWORK_LIMITED service flags, the absence of inbound connections, and the headers-only chain tip (pruned nodes do not serve old blocks for fork resolution).",
+        "source": "blockchain_status"
+      },
+      {
+        "observation": "networkactive=true, connections=10, connections_out=10, connections_in=0, timeoffset=0, localservices include NETWORK_LIMITED and P2P_V2",
+        "significance": "Network stack is active with a healthy outbound peer count. Zero inbound connections are expected for NETWORK_LIMITED (pruned) nodes, which are typically not selected as inbound peers by the broader network. Clock offset is zero, eliminating time-skew as a concern.",
+        "source": "network_status"
+      },
+      {
+        "observation": "All 10 peers are outbound; synced_blocks range 58017\u201358019; synced_headers range 58017\u201358019; all connections use transport_protocol_type=v2; ping times range 0.031\u20130.232 s",
+        "significance": "Peer-reported heights are within 2 blocks of the local tip, providing independent external confirmation that the local chain tip is current. Low, consistent latency and active last-recv timestamps indicate live, responsive connections.",
+        "source": "peer_information"
+      },
+      {
+        "observation": "8 outbound-full-relay peers and 2 block-relay-only peers; services on peers include NETWORK, WITNESS, COMPACT_FILTERS, BLOOM, and P2P_V2 variants",
+        "significance": "Connection-type diversity (full-relay + block-relay-only) reflects the expected Bitcoin Core default peer management strategy, reducing eclipse-attack surface. Rich peer service diversity is normal.",
+        "source": "peer_information"
+      },
+      {
+        "observation": "Active tip: height=58019, hash=00000000\u2026b68cd0, branchlen=0, status=active \u2014 matches bestblockhash in blockchain_status",
+        "significance": "Active tip hash is identical across both tools, confirming internal consistency and ruling out any RPC data mismatch.",
+        "source": "chain_tips"
+      },
+      {
+        "observation": "One headers-only tip at height=57781, branchlen=31; one invalid tip at height=56911, branchlen=1; multiple valid-fork tips ranging from height 53093 to 56198; two valid-headers tips at heights 55520 and 53124",
+        "significance": "The headers-only fork is expected on a pruned node (blocks for a 31-block stale branch are unavailable to download and validate). The single invalid tip reflects a normally rejected block. The numerous shallow valid-fork tips are routine orphaned blocks accumulated over time. None of these tips represent an active threat to the local chain.",
+        "source": "chain_tips"
+      },
+      {
+        "observation": "chainwork=00000000000000000000000000000000000000000000f95be15bd2818bfbc709",
+        "significance": "Accumulated chainwork is consistent with an active mainnet chain of this height, providing a PoW-backed confirmation that the active tip sits on a legitimately built chain.",
+        "source": "blockchain_status"
+      }
+    ],
+    "recommended_human_checks": [
+      "OPTIONAL \u2014 Inbound connectivity: If this node is intended to serve inbound peers (e.g., as a public relay), verify that port 8333 is open in the firewall/router and that 'listen=1' is set in bitcoin.conf. Currently zero inbound connections are expected for a pruned node but would be a gap if relay service is desired.",
+      "OPTIONAL \u2014 Headers-only fork (height 57781, branchlen 31): Investigate whether this represents a known mining pool orphan or an unusual competing chain segment. No action is required unless the branch grows or peers begin preferring it.",
+      "OPTIONAL \u2014 Onion/I2P/CJDNS reachability: These overlay networks are currently limited/unreachable. If privacy-enhanced routing is desired, verify Tor, I2P, or CJDNS daemon configuration and the corresponding bitcoin.conf proxy/bind settings.",
+      "ROUTINE \u2014 Monitor peer count over time: The node maintains exactly the Core default of 10 outbound connections. Confirm this matches the intended 'maxconnections' configuration and that the count remains stable across restarts.",
+      "ROUTINE \u2014 Prune storage headroom: Prune target is ~1.86 GB and size_on_disk is ~114 MB currently. Confirm the host volume has sufficient space buffer as the chain grows, particularly around block growth spurts."
+    ],
+    "safety_boundary": "This investigation was strictly observational. All four tools used are read-only RPC/data queries. No configuration was altered, no transactions were created or broadcast, no wallet operations were performed, no shell commands were issued, and no remediation of any kind was attempted or is possible within this system's capability set.",
+    "summary": "The node is fully synchronized, actively connected to 10 outbound peers, and shows no warnings or anomalies across all four diagnostic sources. Block height equals header height (58019), verification progress is 1.0, IBD is false, and peer-reported heights are tightly clustered at or within 2 blocks of the local tip. Chain tips are consistent with normal network history for a pruned node. The sole areas of minor note \u2014 no inbound connections and a 31-block headers-only fork \u2014 are fully explained by the node's pruned/NETWORK_LIMITED configuration and carry no fault signal.",
+    "uncertainties": [
+      "The most recent block timestamp (time=1788203300) cannot be compared against wall-clock time within this read-only investigation; a human operator should confirm the tip block age is within expected inter-block intervals (~10 min average on mainnet).",
+      "Two peers report synced_blocks=58017 (2 blocks behind local tip). This is within normal propagation variance but worth noting if those peers fail to advance over a longer observation window.",
+      "The valid-headers tip at height 55520 (branchlen=1) indicates headers were received and validated but block data was not fetched; on a pruned node this is benign, but the specific peer that propagated it is not identifiable from available data."
+    ]
+  },
+  "mode": "read_only_diagnostic",
+  "observations": [
+    {
+      "data": {
+        "automatic_pruning": true,
+        "bestblockhash": "00000000000000003b0f2f3e3f7adc5fab5535a7cfe0c194b602ab3182b68cd0",
+        "bits": "1900d4b7",
+        "blocks": 58019,
+        "chain": "main",
+        "chainwork": "00000000000000000000000000000000000000000000f95be15bd2818bfbc709",
+        "difficulty": 5168867537.29428,
+        "headers": 58019,
+        "initialblockdownload": false,
+        "mediantime": 1788194452,
+        "prune_target_size": 1999634432,
+        "pruned": true,
+        "pruneheight": 0,
+        "size_on_disk": 119193976,
+        "target": "0000000000000000d4b700000000000000000000000000000000000000000000",
+        "time": 1788203300,
+        "verificationprogress": 1,
+        "warnings": []
+      },
+      "source": "blockchain_status",
+      "status": "ok"
+    },
+    {
+      "data": {
+        "connections": 10,
+        "connections_in": 0,
+        "connections_out": 10,
+        "localrelay": true,
+        "localservices": "0000000000000c08",
+        "localservicesnames": [
+          "WITNESS",
+          "NETWORK_LIMITED",
+          "P2P_V2"
+        ],
+        "networkactive": true,
+        "networks": [
+          {
+            "limited": false,
+            "name": "ipv4",
+            "reachable": true
+          },
+          {
+            "limited": false,
+            "name": "ipv6",
+            "reachable": true
+          },
+          {
+            "limited": true,
+            "name": "onion",
+            "reachable": false
+          },
+          {
+            "limited": true,
+            "name": "i2p",
+            "reachable": false
+          },
+          {
+            "limited": true,
+            "name": "cjdns",
+            "reachable": false
+          }
+        ],
+        "timeoffset": 0
+      },
+      "source": "network_status",
+      "status": "ok"
+    },
+    {
+      "data": [
+        {
+          "branchlen": 0,
+          "hash": "00000000000000003b0f2f3e3f7adc5fab5535a7cfe0c194b602ab3182b68cd0",
+          "height": 58019,
+          "status": "active"
+        },
+        {
+          "branchlen": 31,
+          "hash": "00000000000026d5370b19996ff85e6c5a9d0a6cda2fc1c200f7bba9aa7bafcc",
+          "height": 57781,
+          "status": "headers-only"
+        },
+        {
+          "branchlen": 1,
+          "hash": "00000000000000003d215764633e6b3bd9f7fc838c3cc1065dc57437e1072ba6",
+          "height": 56911,
+          "status": "invalid"
+        },
+        {
+          "branchlen": 1,
+          "hash": "000000000000000072d8d92fd71320491d26191536f340719b352f34915ffaa1",
+          "height": 56198,
+          "status": "valid-fork"
+        },
+        {
+          "branchlen": 1,
+          "hash": "000000000000000006a7f6910d6b4ddd039a44ba3c759f0c919c7ac819f215f1",
+          "height": 56187,
+          "status": "valid-fork"
+        },
+        {
+          "branchlen": 1,
+          "hash": "000000000000000039254390db15f6bacdc964f760dd46fc898014184659455d",
+          "height": 56123,
+          "status": "valid-fork"
+        },
+        {
+          "branchlen": 1,
+          "hash": "00000000000000001855921ee3aee20d517021cfbc20baa67debc72640a8ef8d",
+          "height": 56086,
+          "status": "valid-fork"
+        },
+        {
+          "branchlen": 1,
+          "hash": "0000000000000000195d694ba375e02b707b7bdef73d3695d34b8a8f326c6323",
+          "height": 55878,
+          "status": "valid-fork"
+        },
+        {
+          "branchlen": 3,
+          "hash": "000000000000000020b2ee044ca5bf40ea159cfa05a5b4f7f48d5793b530252b",
+          "height": 55865,
+          "status": "valid-fork"
+        },
+        {
+          "branchlen": 1,
+          "hash": "000000000000000019fd4d77d1643634c01464eab328aa02b3783e6f19dd0c6b",
+          "height": 55847,
+          "status": "valid-fork"
+        },
+        {
+          "branchlen": 1,
+          "hash": "000000000000000060b17334de69b3c346f77a2d70b3ae5d51abda65a1df83d3",
+          "height": 55834,
+          "status": "valid-fork"
+        },
+        {
+          "branchlen": 1,
+          "hash": "00000000000000006eb84380eb1ad6d5bc860055a53bd94a22b3d0e3526864d3",
+          "height": 55830,
+          "status": "valid-fork"
+        },
+        {
+          "branchlen": 2,
+          "hash": "00000000000000005388be42ce057c0798a73468bc4bbc6cafde48f18215afb5",
+          "height": 55809,
+          "status": "valid-fork"
+        },
+        {
+          "branchlen": 1,
+          "hash": "000000000000000065afe0430e274ba12ab894d8e41389d8ab7f65d15fc45e2c",
+          "height": 55802,
+          "status": "valid-fork"
+        },
+        {
+          "branchlen": 1,
+          "hash": "000000000000000054b48155c12327cc9af564b6c9da3e5657078c68a6795914",
+          "height": 55690,
+          "status": "valid-fork"
+        },
+        {
+          "branchlen": 1,
+          "hash": "000000000000000040cbd79c93bdccff33c1799d6939fc76ea1c32effcfe9899",
+          "height": 55520,
+          "status": "valid-headers"
+        },
+        {
+          "branchlen": 1,
+          "hash": "000000000000000045e1602211b5850833b5dc590ed89c6413b7ec33c8a33b43",
+          "height": 55284,
+          "status": "valid-fork"
+        },
+        {
+          "branchlen": 1,
+          "hash": "000000000000000069d7247e46f9886d1e7aac2d067940a3669c4ca7cae76554",
+          "height": 55277,
+          "status": "valid-fork"
+        },
+        {
+          "branchlen": 1,
+          "hash": "000000000000000020d0f71bf692561baf21f7315b34951cc1f739320afb3c3e",
+          "height": 54739,
+          "status": "valid-fork"
+        },
+        {
+          "branchlen": 1,
+          "hash": "00000000000000003938f815d496538030789a16fd735bf4954d2e6c97f663e1",
+          "height": 54565,
+          "status": "valid-fork"
+        },
+        {
+          "branchlen": 1,
+          "hash": "00000000000000001195d1c4e6d5ca3eb28267709651555a1f227e80822b0ee7",
+          "height": 54518,
+          "status": "valid-fork"
+        },
+        {
+          "branchlen": 2,
+          "hash": "0000000000000000037514d41f2690a296abec9f6e28dff664e6576449d9610a",
+          "height": 53813,
+          "status": "valid-fork"
+        },
+        {
+          "branchlen": 12,
+          "hash": "00000000000000000c298719d1c8aa1b303aa1978f2dca291c9e7f5a2fedeed0",
+          "height": 53569,
+          "status": "valid-fork"
+        },
+        {
+          "branchlen": 1,
+          "hash": "00000000000000001116e077c4743d2537a135fc956c2aaa3d13d0cf3c9fb7e6",
+          "height": 53209,
+          "status": "valid-fork"
+        },
+        {
+          "branchlen": 1,
+          "hash": "00000000000000000049b9ae929352e1e58ef7c2cfa0d42c8b836023bc887fe2",
+          "height": 53207,
+          "status": "valid-fork"
+        },
+        {
+          "branchlen": 1,
+          "hash": "00000000000000000222bdce8f71555994312600dfe33731e66354516a0a28b9",
+          "height": 53192,
+          "status": "valid-fork"
+        },
+        {
+          "branchlen": 1,
+          "hash": "00000000000000000977f23871aa2e14bec0c1e1f419fd77974cc5037577b810",
+          "height": 53190,
+          "status": "valid-fork"
+        },
+        {
+          "branchlen": 1,
+          "hash": "0000000000000000072f32aa7530d5d0f09a7ebf8eca740844bee747be3bd834",
+          "height": 53124,
+          "status": "valid-headers"
+        },
+        {
+          "branchlen": 1,
+          "hash": "000000000000000018556dd29ad7ef379c12769a55ef5a0cd6786438af710ce9",
+          "height": 53106,
+          "status": "valid-fork"
+        },
+        {
+          "branchlen": 1,
+          "hash": "000000000000000001845790c98d7eadd62ec79ef80008985bf0cdaf0afbc525",
+          "height": 53093,
+          "status": "valid-fork"
+        }
+      ],
+      "source": "chain_tips",
+      "status": "ok"
+    },
+    {
+      "data": [
+        {
+          "addr_processed": 418,
+          "addr_rate_limited": 0,
+          "addr_relay_enabled": true,
+          "bytesrecv": 18112,
+          "bytessent": 10461,
+          "connection_type": "outbound-full-relay",
+          "conntime": 1788193858,
+          "inbound": false,
+          "inflight": [],
+          "last_block": 0,
+          "last_transaction": 1788197054,
+          "lastrecv": 1788203221,
+          "lastsend": 1788203222,
+          "minping": 0.069956,
+          "pingtime": 0.073429,
+          "relaytxes": true,
+          "services": "0000000000000c08",
+          "servicesnames": [
+            "WITNESS",
+            "NETWORK_LIMITED",
+            "P2P_V2"
+          ],
+          "synced_blocks": 58017,
+          "synced_headers": 58017,
+          "timeoffset": -1,
+          "transport_protocol_type": "v2"
+        },
+        {
+          "addr_processed": 423,
+          "addr_rate_limited": 0,
+          "addr_relay_enabled": true,
+          "bytesrecv": 25096,
+          "bytessent": 8829,
+          "connection_type": "outbound-full-relay",
+          "conntime": 1788193865,
+          "inbound": false,
+          "inflight": [],
+          "last_block": 0,
+          "last_transaction": 1788200774,
+          "lastrecv": 1788203228,
+          "lastsend": 1788203228,
+          "minping": 0.105259,
+          "pingtime": 0.114616,
+          "relaytxes": true,
+          "services": "0000000000000c09",
+          "servicesnames": [
+            "NETWORK",
+            "WITNESS",
+            "NETWORK_LIMITED",
+            "P2P_V2"
+          ],
+          "synced_blocks": 58019,
+          "synced_headers": 58019,
+          "timeoffset": -1,
+          "transport_protocol_type": "v2"
+        },
+        {
+          "addr_processed": 915,
+          "addr_rate_limited": 0,
+          "addr_relay_enabled": true,
+          "bytesrecv": 33111,
+          "bytessent": 8907,
+          "connection_type": "outbound-full-relay",
+          "conntime": 1788193905,
+          "inbound": false,
+          "inflight": [],
+          "last_block": 1788203222,
+          "last_transaction": 1788194539,
+          "lastrecv": 1788203268,
+          "lastsend": 1788203268,
+          "minping": 0.086724,
+          "pingtime": 0.094355,
+          "relaytxes": true,
+          "services": "0000000000000c09",
+          "servicesnames": [
+            "NETWORK",
+            "WITNESS",
+            "NETWORK_LIMITED",
+            "P2P_V2"
+          ],
+          "synced_blocks": 58019,
+          "synced_headers": 58019,
+          "timeoffset": -1,
+          "transport_protocol_type": "v2"
+        },
+        {
+          "addr_processed": 498,
+          "addr_rate_limited": 0,
+          "addr_relay_enabled": true,
+          "bytesrecv": 19268,
+          "bytessent": 10696,
+          "connection_type": "outbound-full-relay",
+          "conntime": 1788193911,
+          "inbound": false,
+          "inflight": [],
+          "last_block": 0,
+          "last_transaction": 1788200328,
+          "lastrecv": 1788203274,
+          "lastsend": 1788203274,
+          "minping": 0.038118,
+          "pingtime": 0.039557,
+          "relaytxes": true,
+          "services": "0000000000000c08",
+          "servicesnames": [
+            "WITNESS",
+            "NETWORK_LIMITED",
+            "P2P_V2"
+          ],
+          "synced_blocks": 58019,
+          "synced_headers": 58019,
+          "timeoffset": -1,
+          "transport_protocol_type": "v2"
+        },
+        {
+          "addr_processed": 0,
+          "addr_rate_limited": 0,
+          "addr_relay_enabled": false,
+          "bytesrecv": 9611,
+          "bytessent": 6942,
+          "connection_type": "block-relay-only",
+          "conntime": 1788193912,
+          "inbound": false,
+          "inflight": [],
+          "last_block": 0,
+          "last_transaction": 0,
+          "lastrecv": 1788203276,
+          "lastsend": 1788203276,
+          "minping": 0.223526,
+          "pingtime": 0.232017,
+          "relaytxes": false,
+          "services": "0000000000000c08",
+          "servicesnames": [
+            "WITNESS",
+            "NETWORK_LIMITED",
+            "P2P_V2"
+          ],
+          "synced_blocks": 58018,
+          "synced_headers": 58018,
+          "timeoffset": -1,
+          "transport_protocol_type": "v2"
+        },
+        {
+          "addr_processed": 0,
+          "addr_rate_limited": 0,
+          "addr_relay_enabled": false,
+          "bytesrecv": 8951,
+          "bytessent": 9985,
+          "connection_type": "block-relay-only",
+          "conntime": 1788193913,
+          "inbound": false,
+          "inflight": [],
+          "last_block": 0,
+          "last_transaction": 0,
+          "lastrecv": 1788203277,
+          "lastsend": 1788203276,
+          "minping": 0.115372,
+          "pingtime": 0.117601,
+          "relaytxes": false,
+          "services": "0000000000000c09",
+          "servicesnames": [
+            "NETWORK",
+            "WITNESS",
+            "NETWORK_LIMITED",
+            "P2P_V2"
+          ],
+          "synced_blocks": 58018,
+          "synced_headers": 58018,
+          "timeoffset": 0,
+          "transport_protocol_type": "v2"
+        },
+        {
+          "addr_processed": 889,
+          "addr_rate_limited": 0,
+          "addr_relay_enabled": true,
+          "bytesrecv": 30967,
+          "bytessent": 9899,
+          "connection_type": "outbound-full-relay",
+          "conntime": 1788195184,
+          "inbound": false,
+          "inflight": [],
+          "last_block": 1788199358,
+          "last_transaction": 1788200777,
+          "lastrecv": 1788203227,
+          "lastsend": 1788203227,
+          "minping": 0.011593,
+          "pingtime": 0.031031,
+          "relaytxes": true,
+          "services": "0000000000000c4d",
+          "servicesnames": [
+            "NETWORK",
+            "BLOOM",
+            "WITNESS",
+            "COMPACT_FILTERS",
+            "NETWORK_LIMITED",
+            "P2P_V2"
+          ],
+          "synced_blocks": 58019,
+          "synced_headers": 58019,
+          "timeoffset": 0,
+          "transport_protocol_type": "v2"
+        },
+        {
+          "addr_processed": 1002,
+          "addr_rate_limited": 0,
+          "addr_relay_enabled": true,
+          "bytesrecv": 28531,
+          "bytessent": 10907,
+          "connection_type": "outbound-full-relay",
+          "conntime": 1788195193,
+          "inbound": false,
+          "inflight": [],
+          "last_block": 0,
+          "last_transaction": 1788199475,
+          "lastrecv": 1788203236,
+          "lastsend": 1788203236,
+          "minping": 0.036973,
+          "pingtime": 0.039448,
+          "relaytxes": true,
+          "services": "0000000000000c08",
+          "servicesnames": [
+            "WITNESS",
+            "NETWORK_LIMITED",
+            "P2P_V2"
+          ],
+          "synced_blocks": 58019,
+          "synced_headers": 58019,
+          "timeoffset": 0,
+          "transport_protocol_type": "v2"
+        },
+        {
+          "addr_processed": 810,
+          "addr_rate_limited": 0,
+          "addr_relay_enabled": true,
+          "bytesrecv": 24989,
+          "bytessent": 9752,
+          "connection_type": "outbound-full-relay",
+          "conntime": 1788196513,
+          "inbound": false,
+          "inflight": [],
+          "last_block": 0,
+          "last_transaction": 0,
+          "lastrecv": 1788203235,
+          "lastsend": 1788203235,
+          "minping": 0.049169,
+          "pingtime": 0.051035,
+          "relaytxes": true,
+          "services": "0000000000000c4d",
+          "servicesnames": [
+            "NETWORK",
+            "BLOOM",
+            "WITNESS",
+            "COMPACT_FILTERS",
+            "NETWORK_LIMITED",
+            "P2P_V2"
+          ],
+          "synced_blocks": 58019,
+          "synced_headers": 58019,
+          "timeoffset": -1,
+          "transport_protocol_type": "v2"
+        },
+        {
+          "addr_processed": 966,
+          "addr_rate_limited": 0,
+          "addr_relay_enabled": true,
+          "bytesrecv": 26222,
+          "bytessent": 6867,
+          "connection_type": "outbound-full-relay",
+          "conntime": 1788201062,
+          "inbound": false,
+          "inflight": [],
+          "last_block": 0,
+          "last_transaction": 0,
+          "lastrecv": 1788203223,
+          "lastsend": 1788203223,
+          "minping": 0.023392,
+          "pingtime": 0.037855,
+          "relaytxes": true,
+          "services": "0000000000000c09",
+          "servicesnames": [
+            "NETWORK",
+            "WITNESS",
+            "NETWORK_LIMITED",
+            "P2P_V2"
+          ],
+          "synced_blocks": 58019,
+          "synced_headers": 58019,
+          "timeoffset": 0,
+          "transport_protocol_type": "v2"
+        }
+      ],
+      "source": "peer_information",
+      "status": "ok"
+    }
+  ],
+  "recorded_at": "2026-08-31T19:09:31.643043+00:00",
+  "run_error": null,
+  "schema_version": 1
+}
