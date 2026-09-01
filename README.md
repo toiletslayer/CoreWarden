@@ -208,7 +208,7 @@ variables follow boto3 behavior and are not read by CoreWarden itself.
 PowerShell example:
 
 ```powershell
-$env:COREWARDEN_RPC_URL = "http://127.0.0.1:8332"
+$env:COREWARDEN_RPC_URL = "http://127.0.0.1:8337"
 $env:COREWARDEN_RPC_USER = "diagnostic-user"
 $env:COREWARDEN_RPC_PASSWORD = "replace-me"
 $env:AWS_REGION = "us-west-2"
@@ -218,7 +218,7 @@ $env:OPENAI_API_KEY = "your-project-key-here"
 Bash example:
 
 ```bash
-export COREWARDEN_RPC_URL="http://127.0.0.1:8332"
+export COREWARDEN_RPC_URL="http://127.0.0.1:8337"
 export COREWARDEN_RPC_USER="diagnostic-user"
 export COREWARDEN_RPC_PASSWORD="replace-me"
 export AWS_REGION="us-west-2"

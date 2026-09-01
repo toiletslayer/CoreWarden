@@ -22,6 +22,8 @@ from corewarden.models import Diagnosis
 from corewarden.openai_provider import OpenAIResponsesProvider
 from corewarden.rpc import CoreRpcNodeAdapter, JsonRpcHttpTransport
 
+DEFAULT_DESKTOP_RPC_URL = "http://127.0.0.1:8337"
+
 
 @dataclass(frozen=True, slots=True)
 class DesktopConfiguration:

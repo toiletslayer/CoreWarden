@@ -6,22 +6,42 @@ import os
 import sys
 import threading
 import tkinter as tk
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from contextlib import suppress
+from dataclasses import dataclass
 from pathlib import Path
 from tkinter import filedialog, messagebox, ttk
 from tkinter.scrolledtext import ScrolledText
 from typing import Any
 
 from corewarden.credentials import WindowsCredentialStore
-from corewarden.desktop import DesktopConfiguration, DesktopRunResult, DesktopService
+from corewarden.desktop import (
+    DEFAULT_DESKTOP_RPC_URL,
+    DesktopConfiguration,
+    DesktopRunResult,
+    DesktopService,
+)
 from corewarden.diagnostics import SecretRedactor
 from corewarden.errors import CoreWardenError
 
 FIRST_RUN_GUIDANCE = (
-    "Start here: 1 Choose a provider and enter its settings  →  2 Test Provider  →  "
-    "3 Test Node  →  4 Run Diagnosis  →  5 Read the result"
+    "Start here: Choose a provider and enter its settings  →  Test Provider  →  "
+    "Test Node  →  Run Diagnosis  →  Read the result"
 )
+
+RESULT_PLACEHOLDER = "Diagnosis results will appear here."
+
+PROVIDER_LABELS = {
+    "openai": "OpenAI",
+    "bedrock": "Amazon Bedrock",
+}
+
+CREDENTIAL_STATUS_LABELS = {
+    "saved": "OpenAI credential: Saved securely",
+    "environment": "OpenAI credential: Available from environment",
+    "missing": "OpenAI credential: Not configured",
+    "unavailable": "OpenAI credential: Secure storage unavailable",
+}
 
 PRIVACY_NOTICE = """CoreWarden uses only four read-only node RPC methods:
 getblockchaininfo, getnetworkinfo, getpeerinfo, and getchaintips.
@@ -31,12 +51,42 @@ OpenAI keys saved by the app use the current user's Windows Credential Manager.
 CoreWarden does not intentionally persist raw RPC credentials or peer-identifying observations."""
 
 
+@dataclass(frozen=True, slots=True)
+class ProviderVisibility:
+    openai: bool
+    bedrock: bool
+
+
+def provider_id_from_label(label: str) -> str:
+    """Translate a user-facing provider label to the existing internal identifier."""
+    for provider_id, provider_label in PROVIDER_LABELS.items():
+        if provider_label == label:
+            return provider_id
+    raise ValueError(f"Unknown provider label: {label}")
+
+
+def provider_visibility(label: str) -> ProviderVisibility:
+    provider_id = provider_id_from_label(label)
+    return ProviderVisibility(openai=provider_id == "openai", bedrock=provider_id == "bedrock")
+
+
+def default_rpc_url(environment: Mapping[str, str]) -> str:
+    return environment.get("COREWARDEN_RPC_URL", DEFAULT_DESKTOP_RPC_URL)
+
+
+def format_status(provider: str, node: str, activity: str | None = None) -> str:
+    text = f"Provider: {provider} | Node: {node}"
+    return f"{text} | {activity}" if activity else text
+
+
+def credential_status_text(status: str) -> str:
+    return CREDENTIAL_STATUS_LABELS[status]
+
+
 def format_diagnosis(result: DesktopRunResult) -> str:
     """Render a concise, sanitized diagnosis for the desktop output panel."""
     diagnosis = result.diagnosis
-    provider_name = {"openai": "OpenAI", "bedrock": "Amazon Bedrock"}.get(
-        result.provider, result.provider
-    )
+    provider_name = PROVIDER_LABELS.get(result.provider, result.provider)
     lines = [
         f"Provider: {provider_name}",
         f"Classification: {diagnosis.classification.value}",
@@ -80,10 +130,8 @@ class CoreWardenDesktop:
             with suppress(tk.TclError):
                 self._brand_image = tk.PhotoImage(file=str(logo))
 
-        self.provider = tk.StringVar(value="openai")
-        self.rpc_url = tk.StringVar(
-            value=os.environ.get("COREWARDEN_RPC_URL", "http://127.0.0.1:8332")
-        )
+        self.provider = tk.StringVar(value=PROVIDER_LABELS["openai"])
+        self.rpc_url = tk.StringVar(value=default_rpc_url(os.environ))
         self.rpc_user = tk.StringVar(value=os.environ.get("COREWARDEN_RPC_USER", ""))
         self.rpc_password = tk.StringVar(value=os.environ.get("COREWARDEN_RPC_PASSWORD", ""))
         self.rpc_cookie_path = tk.StringVar()
@@ -94,10 +142,16 @@ class CoreWardenDesktop:
         self.bedrock_model = tk.StringVar(
             value=os.environ.get("COREWARDEN_MODEL_ID", "global.anthropic.claude-sonnet-4-6")
         )
-        self.status = tk.StringVar(value="Ready — provider and node not yet tested")
+        self.show_bedrock_advanced = tk.BooleanVar(value=False)
+        self._provider_test_state = "Not tested"
+        self._node_test_state = "Not tested"
+        self.status = tk.StringVar(
+            value=format_status(self._provider_test_state, self._node_test_state)
+        )
 
         self._build()
         self._refresh_credential_status()
+        self._sync_provider_settings()
 
     def _build(self) -> None:
         outer = ttk.Frame(self.root, padding=16)
@@ -126,13 +180,15 @@ class CoreWardenDesktop:
         provider_frame = ttk.LabelFrame(outer, text="Provider", padding=10)
         provider_frame.pack(fill=tk.X, pady=4)
         ttk.Label(provider_frame, text="Use:").grid(row=0, column=0, sticky=tk.W)
-        ttk.Combobox(
+        provider_selector = ttk.Combobox(
             provider_frame,
             textvariable=self.provider,
-            values=("openai", "bedrock"),
+            values=tuple(PROVIDER_LABELS.values()),
             state="readonly",
             width=18,
-        ).grid(row=0, column=1, sticky=tk.W, padx=8)
+        )
+        provider_selector.grid(row=0, column=1, sticky=tk.W, padx=8)
+        provider_selector.bind("<<ComboboxSelected>>", self._sync_provider_settings)
 
         node_frame = ttk.LabelFrame(outer, text="Node connection", padding=10)
         node_frame.pack(fill=tk.X, pady=4)
@@ -152,46 +208,60 @@ class CoreWardenDesktop:
             text="Use either username/password or a cookie file. These values are not saved.",
         ).grid(row=4, column=0, columnspan=3, sticky=tk.W, pady=(3, 0))
 
-        openai_frame = ttk.LabelFrame(outer, text="OpenAI", padding=10)
-        openai_frame.pack(fill=tk.X, pady=4)
-        openai_frame.columnconfigure(1, weight=1)
-        ttk.Label(openai_frame, text="API key").grid(row=0, column=0, sticky=tk.W)
-        ttk.Entry(openai_frame, textvariable=self.openai_key, show="•").grid(
+        provider_settings = ttk.Frame(outer)
+        provider_settings.pack(fill=tk.X)
+
+        self.openai_frame = ttk.LabelFrame(provider_settings, text="OpenAI", padding=10)
+        self.openai_frame.columnconfigure(1, weight=1)
+        ttk.Label(self.openai_frame, text="API key").grid(row=0, column=0, sticky=tk.W)
+        ttk.Entry(self.openai_frame, textvariable=self.openai_key, show="•").grid(
             row=0, column=1, sticky=tk.EW, padx=8
         )
-        ttk.Button(openai_frame, text="Save securely", command=self._save_key).grid(row=0, column=2)
-        ttk.Button(openai_frame, text="Remove saved key", command=self._remove_key).grid(
+        ttk.Button(self.openai_frame, text="Save securely", command=self._save_key).grid(
+            row=0, column=2
+        )
+        ttk.Button(self.openai_frame, text="Remove saved key", command=self._remove_key).grid(
             row=0, column=3, padx=(6, 0)
         )
-        ttk.Label(openai_frame, textvariable=self.openai_status).grid(
+        ttk.Label(self.openai_frame, textvariable=self.openai_status).grid(
             row=1, column=0, columnspan=4, sticky=tk.W, pady=(6, 0)
         )
 
-        bedrock_frame = ttk.LabelFrame(outer, text="Amazon Bedrock", padding=10)
-        bedrock_frame.pack(fill=tk.X, pady=4)
-        bedrock_frame.columnconfigure(1, weight=1)
-        self._entry_row(bedrock_frame, 0, "AWS profile", self.aws_profile)
-        self._entry_row(bedrock_frame, 1, "AWS region", self.aws_region)
-        self._entry_row(bedrock_frame, 2, "Model ID", self.bedrock_model)
+        self.bedrock_frame = ttk.LabelFrame(provider_settings, text="Amazon Bedrock", padding=10)
+        self.bedrock_frame.columnconfigure(1, weight=1)
+        self._entry_row(self.bedrock_frame, 0, "AWS profile", self.aws_profile)
+        self._entry_row(self.bedrock_frame, 1, "AWS region", self.aws_region)
+        ttk.Checkbutton(
+            self.bedrock_frame,
+            text="Show advanced model setting",
+            variable=self.show_bedrock_advanced,
+            command=self._sync_bedrock_advanced,
+        ).grid(row=2, column=0, columnspan=3, sticky=tk.W, pady=(4, 0))
+        self.bedrock_advanced_frame = ttk.Frame(self.bedrock_frame)
+        self.bedrock_advanced_frame.grid(row=3, column=0, columnspan=3, sticky=tk.EW)
+        self.bedrock_advanced_frame.columnconfigure(1, weight=1)
+        self._entry_row(self.bedrock_advanced_frame, 0, "Model ID", self.bedrock_model)
         ttk.Label(
-            bedrock_frame,
+            self.bedrock_frame,
             text="Uses the existing AWS CLI/profile/session; CoreWarden stores no AWS secret.",
-        ).grid(row=3, column=0, columnspan=3, sticky=tk.W, pady=(3, 0))
+        ).grid(row=4, column=0, columnspan=3, sticky=tk.W, pady=(3, 0))
+        self._sync_bedrock_advanced()
 
         actions = ttk.Frame(outer)
         actions.pack(fill=tk.X, pady=10)
-        self._add_action(actions, "2. Test Provider", self._test_provider)
-        self._add_action(actions, "3. Test Node", self._test_node)
-        self._add_action(actions, "4. Run Diagnosis", self._run_diagnosis)
+        self._add_action(actions, "Test Provider", self._test_provider)
+        self._add_action(actions, "Test Node", self._test_node)
+        self._add_action(actions, "Run Diagnosis", self._run_diagnosis)
 
         ttk.Label(outer, textvariable=self.status).pack(anchor=tk.W, pady=(0, 6))
         self.output = ScrolledText(outer, wrap=tk.WORD, height=15, font=("Segoe UI", 10))
         self.output.pack(fill=tk.BOTH, expand=True)
         self.output.configure(state=tk.DISABLED)
+        self._show_text(RESULT_PLACEHOLDER)
 
     @staticmethod
     def _entry_row(
-        frame: ttk.LabelFrame,
+        frame: ttk.Frame,
         row: int,
         label: str,
         variable: tk.StringVar,
@@ -208,9 +278,27 @@ class CoreWardenDesktop:
         button.pack(side=tk.LEFT, padx=(0, 8))
         self._busy_widgets.append(button)
 
+    def _sync_provider_settings(self, event: Any | None = None) -> None:
+        visibility = provider_visibility(self.provider.get())
+        self.openai_frame.pack_forget()
+        self.bedrock_frame.pack_forget()
+        if visibility.openai:
+            self.openai_frame.pack(fill=tk.X, pady=4)
+        if visibility.bedrock:
+            self.bedrock_frame.pack(fill=tk.X, pady=4)
+        if event is not None:
+            self._provider_test_state = "Not tested"
+            self._update_status()
+
+    def _sync_bedrock_advanced(self) -> None:
+        if self.show_bedrock_advanced.get():
+            self.bedrock_advanced_frame.grid()
+        else:
+            self.bedrock_advanced_frame.grid_remove()
+
     def _configuration(self) -> DesktopConfiguration:
         return DesktopConfiguration(
-            provider=self.provider.get(),
+            provider=provider_id_from_label(self.provider.get()),
             rpc_url=self.rpc_url.get(),
             rpc_user=self.rpc_user.get(),
             rpc_password=self.rpc_password.get(),
@@ -229,13 +317,7 @@ class CoreWardenDesktop:
         messagebox.showinfo("CoreWarden privacy", PRIVACY_NOTICE)
 
     def _refresh_credential_status(self) -> None:
-        messages = {
-            "saved": "OpenAI key: saved securely in Windows Credential Manager",
-            "environment": "OpenAI key: available from OPENAI_API_KEY",
-            "missing": "OpenAI key: not configured",
-            "unavailable": "OpenAI key: secure storage unavailable",
-        }
-        self.openai_status.set(messages[self.service.credential_status()])
+        self.openai_status.set(credential_status_text(self.service.credential_status()))
 
     def _save_key(self) -> None:
         secret = self.openai_key.get()
@@ -246,7 +328,7 @@ class CoreWardenDesktop:
             return
         self.openai_key.set("")
         self._refresh_credential_status()
-        self.status.set("OpenAI key saved securely; its full value will not be shown again.")
+        self._update_status("OpenAI credential saved securely")
 
     def _remove_key(self) -> None:
         if not messagebox.askyesno(
@@ -259,7 +341,7 @@ class CoreWardenDesktop:
             self._show_error(exc)
             return
         self._refresh_credential_status()
-        self.status.set("Saved OpenAI key removed.")
+        self._update_status("Saved OpenAI credential removed")
 
     def _test_provider(self) -> None:
         config = self._configuration()
@@ -268,6 +350,7 @@ class CoreWardenDesktop:
             lambda: self.service.test_provider(config),
             lambda result: self._show_text(result.message),
             config,
+            "provider",
         )
 
     def _test_node(self) -> None:
@@ -277,6 +360,7 @@ class CoreWardenDesktop:
             lambda: self.service.test_node(config),
             lambda result: self._show_text(result.message),
             config,
+            "node",
         )
 
     def _run_diagnosis(self) -> None:
@@ -286,6 +370,7 @@ class CoreWardenDesktop:
             lambda: self.service.run_diagnosis(config),
             lambda result: self._show_text(format_diagnosis(result)),
             config,
+            "diagnosis",
         )
 
     def _run_async(
@@ -294,27 +379,43 @@ class CoreWardenDesktop:
         operation: Callable[[], Any],
         success: Callable[[Any], None],
         configuration: DesktopConfiguration,
+        status_target: str,
     ) -> None:
         self._set_busy(True)
-        self.status.set(label)
+        self._update_status(label)
 
         def work() -> None:
             try:
                 result = operation()
             except Exception as exc:
-                self.root.after(0, lambda error=exc: self._complete_error(error, configuration))
+                self.root.after(
+                    0,
+                    lambda error=exc: self._complete_error(error, configuration, status_target),
+                )
             else:
-                self.root.after(0, lambda: self._complete_success(result, success))
+                self.root.after(0, lambda: self._complete_success(result, success, status_target))
 
         threading.Thread(target=work, daemon=True, name="corewarden-desktop-worker").start()
 
-    def _complete_success(self, result: Any, callback: Callable[[Any], None]) -> None:
+    def _complete_success(
+        self, result: Any, callback: Callable[[Any], None], status_target: str
+    ) -> None:
         self._set_busy(False)
         callback(result)
-        self.status.set("Succeeded")
+        if status_target == "provider":
+            self._provider_test_state = "Ready"
+        elif status_target == "node":
+            self._node_test_state = "Connected"
+        self._update_status("Diagnosis complete" if status_target == "diagnosis" else None)
 
-    def _complete_error(self, exc: Exception, configuration: DesktopConfiguration) -> None:
+    def _complete_error(
+        self, exc: Exception, configuration: DesktopConfiguration, status_target: str
+    ) -> None:
         self._set_busy(False)
+        if status_target == "provider":
+            self._provider_test_state = "Failed"
+        elif status_target == "node":
+            self._node_test_state = "Failed"
         self._show_error(exc, configuration=configuration)
 
     def _show_error(
@@ -333,7 +434,10 @@ class CoreWardenDesktop:
             secrets.extend([configuration.rpc_user, configuration.rpc_password])
         safe = SecretRedactor.from_values(*secrets).text(message)
         self._show_text(f"Error: {safe}")
-        self.status.set("Failed")
+        self._update_status("Action failed")
+
+    def _update_status(self, activity: str | None = None) -> None:
+        self.status.set(format_status(self._provider_test_state, self._node_test_state, activity))
 
     def _show_text(self, text: str) -> None:
         self.output.configure(state=tk.NORMAL)
