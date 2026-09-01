@@ -317,6 +317,10 @@ The monitor and model investigation run off the tkinter UI thread. Cycles do not
 monitoring loops are rejected, and closing the window signals monitoring to stop. Event history is
 bounded to 20 controlled, non-secret messages and is not persisted.
 
+For a cost-free local transition demonstration using a loopback-only synthetic Core RPC endpoint,
+see [SYNTHETIC-MONITORING-DEMO.md](SYNTHETIC-MONITORING-DEMO.md). The harness is development-only
+and is not part of the packaged application or production runtime.
+
 When an OpenAI key is saved, it is stored as a generic credential named
 `CoreWarden/OpenAI` in the current Windows user's Credential Manager. The entry
 field is cleared immediately and the full value is never displayed again. The
