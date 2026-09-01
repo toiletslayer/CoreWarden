@@ -70,7 +70,7 @@ def test_icon_builder_reproduces_the_checked_in_icon(tmp_path: Path) -> None:
     assert output.read_bytes() == (root / "assets" / "corewarden.ico").read_bytes()
 
 
-def test_release_zip_contains_only_bundle_and_quickstart(tmp_path: Path) -> None:
+def test_release_zip_contains_bundle_and_public_release_documents(tmp_path: Path) -> None:
     root = Path(__file__).parents[1]
     bundle = tmp_path / "bundle"
     (bundle / "_internal").mkdir(parents=True)
@@ -83,6 +83,10 @@ def test_release_zip_contains_only_bundle_and_quickstart(tmp_path: Path) -> None
     (cache / "module.pyc").write_bytes(b"cache")
     quickstart = tmp_path / "JUDGE-QUICKSTART.txt"
     quickstart.write_text("Launch CoreWarden.exe", encoding="utf-8")
+    license_path = tmp_path / "LICENSE"
+    license_path.write_text("Apache License 2.0", encoding="utf-8")
+    notices = tmp_path / "THIRD-PARTY-NOTICES.md"
+    notices.write_text("Third-party notices", encoding="utf-8")
     output = tmp_path / "CoreWarden-Windows-x64.zip"
 
     subprocess.run(
@@ -95,6 +99,10 @@ def test_release_zip_contains_only_bundle_and_quickstart(tmp_path: Path) -> None
             str(output),
             "--quickstart",
             str(quickstart),
+            "--license",
+            str(license_path),
+            "--notices",
+            str(notices),
         ],
         check=True,
     )
@@ -103,6 +111,8 @@ def test_release_zip_contains_only_bundle_and_quickstart(tmp_path: Path) -> None
         assert set(archive.namelist()) == {
             "CoreWarden/CoreWarden.exe",
             "CoreWarden/JUDGE-QUICKSTART.txt",
+            "CoreWarden/LICENSE",
+            "CoreWarden/THIRD-PARTY-NOTICES.md",
             "CoreWarden/_internal/runtime.dll",
         }
         assert all(info.date_time == (2020, 1, 1, 0, 0, 0) for info in archive.infolist())

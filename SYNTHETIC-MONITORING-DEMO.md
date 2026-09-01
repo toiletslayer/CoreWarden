@@ -71,3 +71,21 @@ call.
 
 All fixture addresses use documentation-only ranges and all credentials are test-only. Never copy
 real node credentials, AWS credentials, or API keys into this harness.
+
+## Short hackathon demo sequence
+
+For a short video, keep the story in three parts:
+
+1. Show the packaged GUI monitoring an authorized healthy node. Point out `Healthy`, the last-check
+   time, and `Last AI investigation: Never`.
+2. Run the cost-free `acceptance` command and briefly show healthy, changed degradation,
+   deduplication, recovery, unavailability, and `privacy_clean: true` without waiting five minutes.
+3. If one live Strands demonstration is desired, start the synthetic server in
+   `degraded_peer_connectivity`, select Bedrock in the GUI, and start monitoring. The immediate
+   degraded snapshot triggers one investigation. Stop monitoring after the result so the demo makes
+   no later cycle. This optional step uses the operator's AWS account and incurs one Bedrock request;
+   it must target the synthetic endpoint, not a production node.
+
+End on the architecture diagram and the four-method allow-list. Use an authorized disposable node
+or previously captured validation for real outage/recovery footage; do not interrupt a production
+node solely for a demonstration.

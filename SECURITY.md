@@ -8,14 +8,23 @@ CoreWarden is pre-1.0. Security fixes are applied to the latest release.
 
 Do not open a public issue for a vulnerability that could expose node RPC
 credentials, peer data, wallet material, or enable state-changing RPC calls.
-Contact the repository maintainers privately and include reproduction steps,
-impact, and the affected version. Do not include live secrets.
+Use GitHub's private **Report a vulnerability** security-advisory form when it
+is available for the repository. If private vulnerability reporting is not yet
+enabled, contact the repository owner and request a private channel before
+sharing details. Include reproduction steps, impact, and the affected version.
+Do not include live secrets in an initial report.
 
 ## Operator guidance
 
 Use a dedicated, least-privilege RPC identity; bind node RPC to a trusted
 interface; prefer a local authenticated proxy for remote access; never commit
 credentials; and review model-provider data handling before submitting peer data.
+
+OpenAI keys belong in Windows Credential Manager or `OPENAI_API_KEY`. AWS
+authentication uses the operator's existing AWS configuration/session. RPC
+passwords and cookie contents are session-only in the desktop app. The synthetic
+harness credentials are public test fixtures and must never be replaced with
+real node credentials.
 
 CoreWarden is a diagnostic aid, not a consensus oracle or a replacement for node
 monitoring and human judgment.

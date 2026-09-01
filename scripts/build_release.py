@@ -33,13 +33,23 @@ def _write_entry(archive: zipfile.ZipFile, name: PurePosixPath, data: bytes) -> 
     archive.writestr(info, data)
 
 
-def build_release(bundle: Path, output: Path, quickstart: Path) -> None:
-    """Package only runnable bundle files and the concise judge quickstart."""
+def build_release(
+    bundle: Path,
+    output: Path,
+    quickstart: Path,
+    license_path: Path,
+    notices_path: Path,
+) -> None:
+    """Package the runnable bundle plus public redistribution documents."""
     executable = bundle / "CoreWarden.exe"
     if not executable.is_file():
         raise FileNotFoundError(f"Expected packaged executable was not found: {executable}")
-    if not quickstart.is_file():
-        raise FileNotFoundError(f"Judge quickstart was not found: {quickstart}")
+    documents = (quickstart, license_path, notices_path)
+    missing_documents = [str(path) for path in documents if not path.is_file()]
+    if missing_documents:
+        raise FileNotFoundError(
+            "Required release document was not found: " + ", ".join(missing_documents)
+        )
 
     files = [path for path in bundle.rglob("*") if path.is_file()]
     included = [(path, path.relative_to(bundle)) for path in files]
@@ -52,7 +62,8 @@ def build_release(bundle: Path, output: Path, quickstart: Path) -> None:
             _write_entry(
                 archive, ARCHIVE_ROOT / PurePosixPath(relative.as_posix()), path.read_bytes()
             )
-        _write_entry(archive, ARCHIVE_ROOT / quickstart.name, quickstart.read_bytes())
+        for document in documents:
+            _write_entry(archive, ARCHIVE_ROOT / document.name, document.read_bytes())
 
 
 def main() -> None:
@@ -61,8 +72,23 @@ def main() -> None:
     parser.add_argument("--bundle", type=Path, default=project_root / "dist" / "CoreWarden")
     parser.add_argument("--output", type=Path, default=project_root / "release" / RELEASE_NAME)
     parser.add_argument("--quickstart", type=Path, default=project_root / "JUDGE-QUICKSTART.txt")
+    parser.add_argument(
+        "--license", dest="license_path", type=Path, default=project_root / "LICENSE"
+    )
+    parser.add_argument(
+        "--notices",
+        dest="notices_path",
+        type=Path,
+        default=project_root / "THIRD-PARTY-NOTICES.md",
+    )
     args = parser.parse_args()
-    build_release(args.bundle, args.output, args.quickstart)
+    build_release(
+        args.bundle,
+        args.output,
+        args.quickstart,
+        args.license_path,
+        args.notices_path,
+    )
 
 
 if __name__ == "__main__":

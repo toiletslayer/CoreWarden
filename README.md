@@ -1,36 +1,57 @@
 # CoreWarden
 
-CoreWarden is a read-only, autonomous node-health investigator for Bitcoin
-Core-compatible blockchain nodes. It is a milestone project for the AWS Agents
-for Humans hackathon.
+CoreWarden quietly supervises a Bitcoin/Core-compatible node, evaluates health
+changes locally, and invokes an AI investigator only when deeper reasoning is
+warranted. It is read-only: it can observe four fixed RPC methods, but it cannot
+repair the node, access wallets, send transactions, or change node state.
 
-Point CoreWarden at one node and its selected model provider gathers several independent
-observations, correlates them, and returns a validated JSON diagnosis:
+The primary agent path uses Strands Agents with Amazon Bedrock. OpenAI's
+Responses API is also supported through the same provider-neutral diagnostic
+boundary. Provider selection is explicit—there is no automatic fallback.
+
+CoreWarden is designed for the AWS Agents for Humans hackathon story:
+
+> Detect meaningful node-health changes deterministically, investigate only when
+> needed, and surface concise evidence for human judgment.
+
+Privacy-sensitive peer and endpoint fields are removed by the local RPC adapter
+before monitoring policy, Strands, Bedrock, OpenAI, logs, or evidence recording
+can receive the observations.
+
+## What it reports
+
+The deterministic monitor reports `healthy`, `degraded`, or `unavailable`.
+When a new or materially changed degradation warrants investigation, the selected
+provider correlates the four read-only observations and returns a validated diagnosis:
 
 - `healthy`
 - `suspicious`
 - `likely_fault`
 
-CoreWarden does not repair the node. It explains what it observed and suggests
-checks for a human operator.
+Unchanged degradation is deduplicated, healthy steady state does not invoke AI,
+and RPC unavailability does not create a provider retry storm.
 
 ## Validated status
 
-Milestone 2 includes a successful live diagnosis of a Bitcoin II v31.1.0 node
-through Strands and Amazon Bedrock in `us-west-2`, using
-`global.anthropic.claude-sonnet-4-6`. All four fixed RPC tools succeeded and the
-agent classified the synchronized node as `healthy` with confidence `0.93`.
+- Live Strands/Bedrock diagnosis against Bitcoin II v31.1.0 in `us-west-2`
+  using `global.anthropic.claude-sonnet-4-6`; all four tools succeeded.
+- Live OpenAI diagnosis through the same privacy-filtered node boundary.
+- Packaged monitoring against a real Bitcoin II node: healthy steady state,
+  outage detection, and automatic recovery, with no AI call while healthy or
+  unavailable.
+- Cost-free synthetic acceptance covering degradation, deduplication, changed
+  degradation, recovery, unavailability, and provider-visible privacy.
+- 99 passing tests and 91% coverage at the current checkpoint.
 
 The committed [live evidence artifact](corewarden-evidence-live-healthy-success.json)
 contains the four sanitized observations and validated diagnosis. Its privacy
 audit found no credentials, addresses, endpoint strings, hostnames, client
 subversions, peer/session identifiers, AS mappings, proxy/listener endpoints, or
 unknown peer fields in model payloads, logs, structured output, or evidence. No
-node modification or remediation occurred. The associated test checkpoint is 28
-passing tests, 93% coverage, and clean Ruff lint and changed-file formatting
-checks. See [LIVE_VALIDATION.md](LIVE_VALIDATION.md) for details.
+node modification or remediation occurred. See [LIVE_VALIDATION.md](LIVE_VALIDATION.md)
+for the original live-validation record.
 
-## Milestone 1 architecture and Milestone 2 validation
+## Read-only observations
 
 CoreWarden can read:
 
@@ -55,42 +76,9 @@ network state and warnings, and competing or invalid chain tips.
 
 ## Architecture
 
-```text
-CLI / environment
-       |
-       v
-manual diagnosis / optional local monitor
-                       |
-                       +-- deterministic health snapshot + transition policy
-                       |                         |
-                       |                         +-- unchanged state: no AI
-                       |                         +-- changed degradation: investigate once
-                       v
-provider-neutral diagnostic workflow
-       |
-       v
-DiagnosisProvider protocol
-       |                                   |
-       v                                   v
-StrandsBedrockProvider       OpenAIResponsesProvider
-       |                                   |
-       v                                   v
-Strands Agent tools          Responses API function tools
-       |                                   |
-       +---------------+-------------------+
-                       |
-                       v
-              Diagnosis (Pydantic)
-       |
-       v
-CoreNode protocol
-       |
-       v
-CoreRpcNodeAdapter (privacy projection)
-       |
-       v
-JSON-RPC HTTP transport ----> one Core-compatible node
-```
+See [ARCHITECTURE.md](ARCHITECTURE.md) for the GitHub-renderable Mermaid
+diagram, control flow, privacy boundary, monitoring escalation policy, and
+credential boundaries.
 
 `CoreNode` is the chain-neutral diagnostic interface. `CoreRpcNodeAdapter` is
 the first adapter and depends only on the conventional Bitcoin Core-style RPC
@@ -116,7 +104,7 @@ before they reach the CLI.
 
 ## Safety boundary
 
-Milestone 1 is structurally read-only. Its RPC allow-list contains exactly:
+CoreWarden is structurally read-only. Its RPC allow-list contains exactly:
 
 ```text
 getblockchaininfo
@@ -184,6 +172,12 @@ Install the application and test tools:
 
 ```bash
 python -m pip install -e ".[dev]"
+```
+
+For a Windows packaging environment, install both optional groups:
+
+```powershell
+python -m pip install -e ".[dev,package]"
 ```
 
 ## Configuration
@@ -346,6 +340,9 @@ Build on Windows with the included PowerShell script:
 .\scripts\build_windows.ps1
 ```
 
+Close any `CoreWarden.exe` launched from the repository's `dist` directory before
+rebuilding; Windows keeps bundled DLLs locked while that app is running.
+
 The script rebuilds the approved multi-resolution icon, cleans prior build,
 distribution, and release directories, installs the `package` optional
 dependency, runs the checked-in PyInstaller specification, and creates the
@@ -356,8 +353,9 @@ dist\CoreWarden\CoreWarden.exe
 release\CoreWarden-Windows-x64.zip
 ```
 
-Distribute the ZIP. It contains only the complete `CoreWarden` onedir bundle and
-the short judge quickstart. The judge does not need a separate Python
+Distribute the ZIP. It contains the complete `CoreWarden` onedir bundle, the
+short judge quickstart, the Apache-2.0 project license, and direct-dependency
+notices. The judge does not need a separate Python
 installation, but still needs a reachable local node and either their own OpenAI
 project key or an authenticated AWS profile/session. A one-folder build is used
 instead of a one-file archive for predictable startup and dependency inspection.
@@ -457,6 +455,10 @@ function-call semantics, bounded loops, safe error normalization, explicit
 provider selection, no fallback, and the sanitized data visible at both provider
 boundaries.
 
+The synthetic acceptance tests additionally use a real loopback HTTP server and
+the production transport/adapter path. They use deliberately fake credentials
+and a fake provider; no paid API or real node is contacted.
+
 ## Deliberately deferred
 
 Remediation, restarts, wallet functionality, general-purpose dashboards, cloud deployment, fleet
@@ -482,4 +484,5 @@ The OpenAI provider follows the official OpenAI documentation:
 
 ## License
 
-Apache-2.0. See `LICENSE`.
+Apache-2.0. See [LICENSE](LICENSE). Direct runtime and packaging dependency
+attributions are summarized in [THIRD-PARTY-NOTICES.md](THIRD-PARTY-NOTICES.md).

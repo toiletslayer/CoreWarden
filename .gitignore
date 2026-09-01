@@ -8,6 +8,12 @@ __pycache__/
 .coverage
 htmlcov/
 .env
+.env.*
+!.env.example
+*.pem
+*.key
+*.p12
+*.pfx
 corewarden-evidence*.json
 # This one privacy-audited Milestone 2 artifact is intentionally versioned.
 !corewarden-evidence-live-healthy-success.json
