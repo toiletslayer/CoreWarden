@@ -205,6 +205,10 @@ process listings.
 
 AWS variables such as `AWS_REGION`, `AWS_PROFILE`, or temporary credential
 variables follow boto3 behavior and are not read by CoreWarden itself.
+CoreWarden includes botocore's CRT support so the Python and packaged runtimes
+can consume `login_session` credentials created by `aws login`. Authenticate
+with your own AWS configuration and select the same profile and region in
+CoreWarden; access keys and session tokens are never stored by the application.
 
 PowerShell example:
 

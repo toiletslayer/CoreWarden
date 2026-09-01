@@ -9,6 +9,7 @@ licenses:
 | Pydantic | validated configuration and diagnosis models | MIT |
 | Strands Agents | Bedrock agent and tool runtime | Apache-2.0 |
 | boto3 / botocore | AWS credential and Bedrock runtime integration through Strands | Apache-2.0 |
+| AWS Common Runtime for Python (awscrt) | AWS `login_session` credential support | Apache-2.0 |
 
 The Windows bundle is created with PyInstaller, which is GPL-2.0-or-later with
 the PyInstaller bootloader exception permitting distribution of the resulting

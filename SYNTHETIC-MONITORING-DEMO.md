@@ -89,3 +89,12 @@ For a short video, keep the story in three parts:
 End on the architecture diagram and the four-method allow-list. Use an authorized disposable node
 or previously captured validation for real outage/recovery footage; do not interrupt a production
 node solely for a demonstration.
+
+## Successful Bedrock monitoring acceptance
+
+The final real-provider acceptance used the loopback synthetic node with Strands, Amazon Bedrock in
+`us-west-2`, and `global.anthropic.claude-sonnet-4-6`. The healthy cycle made no provider call.
+Changing to `degraded_peer_connectivity` produced one monitoring-triggered investigation, invoked
+all four sanitized tools, and returned `suspicious` with confidence `0.82`. A second cycle with the
+same degradation was deduplicated, leaving the total at one escalation. The provider-visible
+privacy audit passed; no retry, fallback, OpenAI request, remediation, or real-node contact occurred.
