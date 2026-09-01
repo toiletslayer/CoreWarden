@@ -10,10 +10,13 @@ from corewarden.gui import (
     credential_status_text,
     default_rpc_url,
     format_diagnosis,
+    format_monitoring_state,
+    format_monitoring_time,
     format_status,
     provider_id_from_label,
     provider_visibility,
 )
+from corewarden.monitoring import HealthState, MonitoringStatus
 from tests.test_agent import sample_diagnosis
 
 
@@ -116,3 +119,12 @@ def test_status_placeholder_and_credential_wording_are_human_readable() -> None:
     )
     assert credential_status_text("missing") == "OpenAI credential: Not configured"
     assert "secret" not in credential_status_text("unavailable").lower()
+
+
+def test_monitoring_status_formatting_is_concise() -> None:
+    off = MonitoringStatus(False, None, None, None, "Never", ())
+    active = MonitoringStatus(True, HealthState.DEGRADED, None, None, "Failed", ())
+
+    assert format_monitoring_state(off) == "Off"
+    assert format_monitoring_state(active) == "Degraded"
+    assert format_monitoring_time(None) == "Never"

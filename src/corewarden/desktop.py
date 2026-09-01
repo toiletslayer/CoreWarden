@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+import threading
 from collections.abc import Callable, Iterator, Mapping
 from contextlib import contextmanager
 from dataclasses import dataclass, field
@@ -19,6 +20,7 @@ from corewarden.credentials import (
 )
 from corewarden.errors import ConfigurationError, CoreWardenError, ProviderError
 from corewarden.models import Diagnosis
+from corewarden.monitoring import MonitoringService, MonitoringStatus, evaluate_health
 from corewarden.openai_provider import OpenAIResponsesProvider
 from corewarden.rpc import CoreRpcNodeAdapter, JsonRpcHttpTransport
 
@@ -145,6 +147,7 @@ class DesktopService:
     )
     node_factory: Callable[[Settings], Any] | None = field(default=None, repr=False)
     diagnosis_runner: Callable[[Any, Any], Diagnosis] = field(default=diagnose, repr=False)
+    _diagnosis_lock: threading.Lock = field(default_factory=threading.Lock, init=False, repr=False)
 
     def __post_init__(self) -> None:
         if self.node_factory is None:
@@ -220,16 +223,35 @@ class DesktopService:
     def run_diagnosis(self, configuration: DesktopConfiguration) -> DesktopRunResult:
         settings = configuration.settings()
         node = self._node(settings)
-        if configuration.provider == "openai":
-            provider = OpenAIResponsesProvider(api_key=self._openai_key())
-            diagnosis = self.diagnosis_runner(node, provider)
-        elif configuration.provider == "bedrock":
-            with _temporary_aws_environment(configuration.aws_profile, configuration.aws_region):
-                provider = StrandsBedrockProvider(settings.model_id)
+        with self._diagnosis_lock:
+            if configuration.provider == "openai":
+                provider = OpenAIResponsesProvider(api_key=self._openai_key())
                 diagnosis = self.diagnosis_runner(node, provider)
-        else:
-            raise ConfigurationError("Choose OpenAI or Bedrock.")
+            elif configuration.provider == "bedrock":
+                with _temporary_aws_environment(
+                    configuration.aws_profile, configuration.aws_region
+                ):
+                    provider = StrandsBedrockProvider(settings.model_id)
+                    diagnosis = self.diagnosis_runner(node, provider)
+            else:
+                raise ConfigurationError("Choose OpenAI or Bedrock.")
         return DesktopRunResult(provider=configuration.provider, diagnosis=diagnosis)
+
+    def create_monitor(
+        self,
+        configuration: DesktopConfiguration,
+        *,
+        interval_seconds: float,
+        status_callback: Callable[[MonitoringStatus], None] | None = None,
+    ) -> MonitoringService:
+        """Build monitoring over the same sanitized adapter and diagnosis workflow."""
+        settings = configuration.settings()
+        return MonitoringService(
+            snapshot_source=lambda: evaluate_health(self._node(settings)),
+            diagnosis_runner=lambda: self.run_diagnosis(configuration).diagnosis,
+            interval_seconds=interval_seconds,
+            status_callback=status_callback,
+        )
 
     def _node(self, settings: Settings) -> Any:
         if self.node_factory is None:

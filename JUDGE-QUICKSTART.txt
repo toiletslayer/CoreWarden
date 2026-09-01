@@ -13,8 +13,13 @@ CoreWarden Windows quickstart
    either RPC username/password or its cookie file; CoreWarden does not save them.
 5. Select Test Provider, then Test Node, then Run Diagnosis.
 6. Read the classification, confidence, evidence, and safety boundary in the result.
+7. Optional: choose an interval (5 minutes by default) and select Start Monitoring.
+   Deterministic local checks run on each cycle. AI runs only for a new or materially
+   changed degraded condition; unchanged conditions are deduplicated.
 
 Privacy: CoreWarden calls only getblockchaininfo, getnetworkinfo, getpeerinfo, and
 getchaintips. Peer-identifying and endpoint data is filtered locally before model
 access. Raw RPC credentials and peer-identifying observations are not intentionally
 persisted.
+Monitoring is read-only, off by default, and its bounded recent-event history is in
+memory only.

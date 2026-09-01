@@ -228,3 +228,31 @@ def test_desktop_service_rejects_unknown_provider() -> None:
         service.test_provider(configuration("other"))
     with pytest.raises(ConfigurationError, match="Choose OpenAI or Bedrock"):
         service.run_diagnosis(configuration("other"))
+
+
+def test_desktop_monitor_reuses_sanitized_node_and_selected_provider(monkeypatch: Any) -> None:
+    node = FakeNode()
+    diagnoses: list[Any] = []
+
+    class FakeOpenAIProvider:
+        def __init__(self, *, api_key: str) -> None:
+            assert api_key == "saved-key"
+
+    monkeypatch.setattr("corewarden.desktop.OpenAIResponsesProvider", FakeOpenAIProvider)
+
+    def run(received_node: Any, provider: Any) -> Any:
+        diagnoses.append((received_node, provider))
+        return sample_diagnosis()
+
+    service = DesktopService(
+        FakeStore("saved-key"),
+        environment={},
+        node_factory=lambda settings: node,
+        diagnosis_runner=run,
+    )
+    monitor = service.create_monitor(configuration(), interval_seconds=300)
+    monitor._active = True
+
+    assert monitor.run_cycle() is True
+    assert diagnoses == []
+    assert monitor.status.current_state.value == "healthy"

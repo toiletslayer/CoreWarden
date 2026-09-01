@@ -23,6 +23,12 @@ from corewarden.desktop import (
 )
 from corewarden.diagnostics import SecretRedactor
 from corewarden.errors import CoreWardenError
+from corewarden.monitoring import (
+    DEFAULT_MONITORING_INTERVAL_SECONDS,
+    SUPPORTED_MONITORING_INTERVAL_MINUTES,
+    MonitoringService,
+    MonitoringStatus,
+)
 
 FIRST_RUN_GUIDANCE = (
     "Start here: Choose a provider and enter its settings  →  Test Provider  →  "
@@ -102,6 +108,18 @@ def format_diagnosis(result: DesktopRunResult) -> str:
     return "\n".join(lines)
 
 
+def format_monitoring_state(status: MonitoringStatus | None) -> str:
+    if status is None or not status.active:
+        return "Off"
+    return status.current_state.value.title() if status.current_state else "Starting"
+
+
+def format_monitoring_time(value: Any) -> str:
+    if value is None:
+        return "Never"
+    return value.astimezone().strftime("%H:%M:%S")
+
+
 def _asset_path(name: str) -> Path:
     frozen_root = getattr(sys, "_MEIPASS", None)
     if frozen_root:
@@ -117,10 +135,12 @@ class CoreWardenDesktop:
         self.service = service or DesktopService(WindowsCredentialStore())
         self._busy_widgets: list[ttk.Button] = []
         self._brand_image: tk.PhotoImage | None = None
+        self._monitor: MonitoringService | None = None
 
         root.title("CoreWarden — Read-only Node Health")
-        root.minsize(760, 720)
-        root.geometry("820x800")
+        root.minsize(760, 800)
+        root.geometry("840x920")
+        root.protocol("WM_DELETE_WINDOW", self._close)
         icon = _asset_path("corewarden.ico")
         if icon.exists():
             with suppress(tk.TclError):
@@ -147,6 +167,11 @@ class CoreWardenDesktop:
         self._node_test_state = "Not tested"
         self.status = tk.StringVar(
             value=format_status(self._provider_test_state, self._node_test_state)
+        )
+        self.monitor_interval = tk.StringVar(value=str(DEFAULT_MONITORING_INTERVAL_SECONDS // 60))
+        self.monitor_state = tk.StringVar(value="Monitoring: Off")
+        self.monitor_details = tk.StringVar(
+            value="Last check: Never | Last AI investigation: Never"
         )
 
         self._build()
@@ -254,7 +279,39 @@ class CoreWardenDesktop:
         self._add_action(actions, "Run Diagnosis", self._run_diagnosis)
 
         ttk.Label(outer, textvariable=self.status).pack(anchor=tk.W, pady=(0, 6))
-        self.output = ScrolledText(outer, wrap=tk.WORD, height=15, font=("Segoe UI", 10))
+        monitor_frame = ttk.LabelFrame(outer, text="Optional local monitoring", padding=10)
+        monitor_frame.pack(fill=tk.X, pady=(0, 8))
+        ttk.Label(monitor_frame, textvariable=self.monitor_state).grid(row=0, column=0, sticky=tk.W)
+        ttk.Label(monitor_frame, text="Interval (minutes)").grid(
+            row=0, column=1, sticky=tk.E, padx=(20, 4)
+        )
+        ttk.Combobox(
+            monitor_frame,
+            textvariable=self.monitor_interval,
+            values=tuple(str(value) for value in SUPPORTED_MONITORING_INTERVAL_MINUTES),
+            state="readonly",
+            width=5,
+        ).grid(row=0, column=2, sticky=tk.W)
+        self.start_monitor_button = ttk.Button(
+            monitor_frame, text="Start Monitoring", command=self._start_monitoring
+        )
+        self.start_monitor_button.grid(row=0, column=3, padx=(12, 4))
+        self.stop_monitor_button = ttk.Button(
+            monitor_frame, text="Stop Monitoring", command=self._stop_monitoring
+        )
+        self.stop_monitor_button.grid(row=0, column=4)
+        self.stop_monitor_button.configure(state=tk.DISABLED)
+        ttk.Label(monitor_frame, textvariable=self.monitor_details).grid(
+            row=1, column=0, columnspan=5, sticky=tk.W, pady=(5, 3)
+        )
+        self.monitor_history = ScrolledText(
+            monitor_frame, wrap=tk.WORD, height=4, font=("Segoe UI", 9)
+        )
+        self.monitor_history.grid(row=2, column=0, columnspan=5, sticky=tk.EW)
+        self.monitor_history.configure(state=tk.DISABLED)
+        monitor_frame.columnconfigure(0, weight=1)
+
+        self.output = ScrolledText(outer, wrap=tk.WORD, height=12, font=("Segoe UI", 10))
         self.output.pack(fill=tk.BOTH, expand=True)
         self.output.configure(state=tk.DISABLED)
         self._show_text(RESULT_PLACEHOLDER)
@@ -372,6 +429,49 @@ class CoreWardenDesktop:
             config,
             "diagnosis",
         )
+
+    def _start_monitoring(self) -> None:
+        if self._monitor is not None and self._monitor.status.active:
+            return
+        configuration = self._configuration()
+        try:
+            self._monitor = self.service.create_monitor(
+                configuration,
+                interval_seconds=float(self.monitor_interval.get()) * 60,
+                status_callback=lambda status: self.root.after(
+                    0, lambda current=status: self._show_monitoring_status(current)
+                ),
+            )
+            self._monitor.start()
+        except Exception as exc:
+            self._show_error(exc, configuration=configuration)
+
+    def _stop_monitoring(self) -> None:
+        if self._monitor is not None:
+            self._monitor.stop(wait=False)
+
+    def _show_monitoring_status(self, status: MonitoringStatus) -> None:
+        self.monitor_state.set(f"Monitoring: {format_monitoring_state(status)}")
+        self.monitor_details.set(
+            f"Last check: {format_monitoring_time(status.last_check_at)} | "
+            f"Last AI investigation: {format_monitoring_time(status.last_ai_at)} "
+            f"({status.last_ai_status})"
+        )
+        self.start_monitor_button.configure(state=tk.DISABLED if status.active else tk.NORMAL)
+        self.stop_monitor_button.configure(state=tk.NORMAL if status.active else tk.DISABLED)
+        lines = [
+            f"{format_monitoring_time(event.occurred_at)} — {event.message}"
+            for event in status.events
+        ]
+        self.monitor_history.configure(state=tk.NORMAL)
+        self.monitor_history.delete("1.0", tk.END)
+        self.monitor_history.insert(tk.END, "\n".join(lines) or "No monitoring events yet.")
+        self.monitor_history.configure(state=tk.DISABLED)
+
+    def _close(self) -> None:
+        if self._monitor is not None:
+            self._monitor.stop(wait=False)
+        self.root.destroy()
 
     def _run_async(
         self,

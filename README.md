@@ -59,6 +59,13 @@ network state and warnings, and competing or invalid chain tips.
 CLI / environment
        |
        v
+manual diagnosis / optional local monitor
+                       |
+                       +-- deterministic health snapshot + transition policy
+                       |                         |
+                       |                         +-- unchanged state: no AI
+                       |                         +-- changed degradation: investigate once
+                       v
 provider-neutral diagnostic workflow
        |
        v
@@ -288,7 +295,27 @@ The small `tkinter` window provides:
 - secure OpenAI-key save/remove actions;
 - separate provider and node configuration checks;
 - read-only diagnosis through the existing `diagnose()` workflow;
+- optional local monitoring at 5, 10, 15, 30, or 60-minute intervals;
 - a concise classification, confidence, summary, evidence, and safety result.
+
+### Optional local monitoring
+
+Monitoring is off until the operator explicitly starts it. It performs one immediate check and
+then checks at the selected interval (5 minutes by default). Each check calls only the same four
+read-only methods through `CoreRpcNodeAdapter`, so peer and endpoint privacy filtering occurs
+before the monitoring policy or a provider can receive observations.
+
+The local policy reports `healthy`, `degraded`, or `unavailable`. It records a small in-memory
+history of state transitions and meaningful condition changes. Healthy steady state never invokes
+AI. A new or materially changed degraded fingerprint invokes the existing diagnosis workflow once;
+the same unchanged problem, including a failed provider attempt, is deduplicated for the remainder
+of that monitoring session. RPC unavailability is recorded locally without invoking AI, and
+recovery is recorded without a recovery model call. Monitoring never retries a provider simply
+because another timer cycle elapsed.
+
+The monitor and model investigation run off the tkinter UI thread. Cycles do not overlap, duplicate
+monitoring loops are rejected, and closing the window signals monitoring to stop. Event history is
+bounded to 20 controlled, non-secret messages and is not persisted.
 
 When an OpenAI key is saved, it is stored as a generic credential named
 `CoreWarden/OpenAI` in the current Windows user's Credential Manager. The entry
@@ -428,7 +455,7 @@ boundaries.
 
 ## Deliberately deferred
 
-Remediation, restarts, wallet functionality, dashboards, cloud deployment, fleet
+Remediation, restarts, wallet functionality, general-purpose dashboards, cloud deployment, fleet
 management, transaction sending, chain-specific policy thresholds, persistent
 state beyond opt-in local evidence capture, and arbitrary RPC remain out of scope.
 Hosted/shared inference, provider auto-routing, credential GUIs or storage,
