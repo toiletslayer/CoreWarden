@@ -1,6 +1,11 @@
-# CoreWarden desktop icon hook
+# CoreWarden desktop branding
 
-Place the final Windows icon at `assets/corewarden.ico` before packaging.
+The approved source artwork is tracked without modification at:
 
-The GUI and `CoreWarden.spec` detect that exact file automatically. When it is
-absent, the build succeeds with the default application icon.
+- `assets/Sprite32.png`
+- `assets/Sprite64.png`
+- `assets/Sprite128.png`
+
+Run `python scripts/build_icon.py` to create `assets/corewarden.ico`. The icon
+contains those three native PNG payloads byte-for-byte at 32, 64, and 128 pixels.
+The GUI and `CoreWarden.spec` use the resulting icon and packaged PNG assets.

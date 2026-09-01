@@ -252,6 +252,28 @@ fails before any node tool runs or evidence file is created.
 
 ## Windows desktop app
 
+### Judge quickstart
+
+1. Extract the entire `CoreWarden` folder from `CoreWarden-Windows-x64.zip`.
+2. Launch `CoreWarden.exe`. The unsigned build may require confirmation through
+   Windows SmartScreen.
+3. Choose OpenAI or Bedrock. For OpenAI, paste a project key and select **Save
+   securely**; for Bedrock, use an authenticated AWS profile/session with access
+   in the selected region.
+4. Enter the URL and authentication for a running local Core-compatible node.
+   Use either RPC username/password or a cookie file.
+5. Select **Test Provider**, **Test Node**, then **Run Diagnosis**.
+6. Read the classification, confidence, evidence, and safety boundary in the
+   result panel.
+
+CoreWarden calls only `getblockchaininfo`, `getnetworkinfo`, `getpeerinfo`, and
+`getchaintips`. Peer-identifying and endpoint data is filtered locally before
+model access. The app stores OpenAI keys in Windows Credential Manager and does
+not intentionally persist raw RPC credentials or peer-identifying observations.
+The release ZIP also includes `JUDGE-QUICKSTART.txt` with these steps.
+
+### Development launch
+
 Install and launch the native desktop entry point during development:
 
 ```powershell
@@ -293,22 +315,26 @@ Build on Windows with the included PowerShell script:
 .\scripts\build_windows.ps1
 ```
 
-The script installs the `package` optional dependency and runs the checked-in
-PyInstaller specification. Its output is the one-folder bundle:
+The script rebuilds the approved multi-resolution icon, cleans prior build,
+distribution, and release directories, installs the `package` optional
+dependency, runs the checked-in PyInstaller specification, and creates the
+judge-ready ZIP. Its outputs are:
 
 ```text
 dist\CoreWarden\CoreWarden.exe
+release\CoreWarden-Windows-x64.zip
 ```
 
-Copy the entire `dist\CoreWarden` directory when distributing it. The judge does
-not need a separate Python installation, but still needs a reachable local node
-and either their own OpenAI project key or an authenticated AWS profile/session.
-A one-folder build is used instead of a one-file archive for more predictable
-startup and easier dependency inspection.
+Distribute the ZIP. It contains only the complete `CoreWarden` onedir bundle and
+the short judge quickstart. The judge does not need a separate Python
+installation, but still needs a reachable local node and either their own OpenAI
+project key or an authenticated AWS profile/session. A one-folder build is used
+instead of a one-file archive for predictable startup and dependency inspection.
 
-For final branding, place a Windows icon at `assets\corewarden.ico` before the
-build. Both the executable and GUI discover that file automatically. Packaging
-continues with the default icon when it is absent.
+The approved `Sprite32.png`, `Sprite64.png`, and `Sprite128.png` files are kept
+unchanged under `assets`. `scripts\build_icon.py` embeds all three native PNG
+payloads into `assets\corewarden.ico`; PyInstaller uses it for the executable and
+the GUI uses the packaged artwork for its window and compact header branding.
 
 Known limitations: this is a Windows-first local bundle, not an installer; it
 does not create accounts, configure a node, persist RPC secrets, refresh expired

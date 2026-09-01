@@ -18,6 +18,18 @@ from corewarden.desktop import DesktopConfiguration, DesktopRunResult, DesktopSe
 from corewarden.diagnostics import SecretRedactor
 from corewarden.errors import CoreWardenError
 
+FIRST_RUN_GUIDANCE = (
+    "Start here: 1 Choose a provider and enter its settings  →  2 Test Provider  →  "
+    "3 Test Node  →  4 Run Diagnosis  →  5 Read the result"
+)
+
+PRIVACY_NOTICE = """CoreWarden uses only four read-only node RPC methods:
+getblockchaininfo, getnetworkinfo, getpeerinfo, and getchaintips.
+
+Peer-identifying and endpoint data is filtered locally before model access.
+OpenAI keys saved by the app use the current user's Windows Credential Manager.
+CoreWarden does not intentionally persist raw RPC credentials or peer-identifying observations."""
+
 
 def format_diagnosis(result: DesktopRunResult) -> str:
     """Render a concise, sanitized diagnosis for the desktop output panel."""
@@ -54,14 +66,19 @@ class CoreWardenDesktop:
         self.root = root
         self.service = service or DesktopService(WindowsCredentialStore())
         self._busy_widgets: list[ttk.Button] = []
+        self._brand_image: tk.PhotoImage | None = None
 
         root.title("CoreWarden — Read-only Node Health")
-        root.minsize(760, 680)
-        root.geometry("820x760")
+        root.minsize(760, 720)
+        root.geometry("820x800")
         icon = _asset_path("corewarden.ico")
         if icon.exists():
             with suppress(tk.TclError):
                 root.iconbitmap(default=str(icon))
+        logo = _asset_path("Sprite64.png")
+        if logo.exists():
+            with suppress(tk.TclError):
+                self._brand_image = tk.PhotoImage(file=str(logo))
 
         self.provider = tk.StringVar(value="openai")
         self.rpc_url = tk.StringVar(
@@ -85,11 +102,26 @@ class CoreWardenDesktop:
     def _build(self) -> None:
         outer = ttk.Frame(self.root, padding=16)
         outer.pack(fill=tk.BOTH, expand=True)
-        ttk.Label(outer, text="CoreWarden", font=("Segoe UI", 20, "bold")).pack(anchor=tk.W)
+
+        header = ttk.Frame(outer)
+        header.pack(fill=tk.X, pady=(0, 8))
+        if self._brand_image is not None:
+            ttk.Label(header, image=self._brand_image).pack(side=tk.LEFT, padx=(0, 10))
+        title = ttk.Frame(header)
+        title.pack(side=tk.LEFT, fill=tk.X, expand=True)
+        ttk.Label(title, text="CoreWarden", font=("Segoe UI", 20, "bold")).pack(anchor=tk.W)
+        ttk.Label(
+            title,
+            text="Read-only health investigation for Core-compatible nodes",
+        ).pack(anchor=tk.W)
+        ttk.Button(header, text="Privacy", command=self._show_privacy).pack(side=tk.RIGHT)
+
         ttk.Label(
             outer,
-            text="Read-only health investigation for Core-compatible nodes",
-        ).pack(anchor=tk.W, pady=(0, 14))
+            text=FIRST_RUN_GUIDANCE,
+            wraplength=780,
+            justify=tk.LEFT,
+        ).pack(anchor=tk.W, pady=(0, 10))
 
         provider_frame = ttk.LabelFrame(outer, text="Provider", padding=10)
         provider_frame.pack(fill=tk.X, pady=4)
@@ -148,9 +180,9 @@ class CoreWardenDesktop:
 
         actions = ttk.Frame(outer)
         actions.pack(fill=tk.X, pady=10)
-        self._add_action(actions, "Test Provider", self._test_provider)
-        self._add_action(actions, "Test Node", self._test_node)
-        self._add_action(actions, "Run Diagnosis", self._run_diagnosis)
+        self._add_action(actions, "2. Test Provider", self._test_provider)
+        self._add_action(actions, "3. Test Node", self._test_node)
+        self._add_action(actions, "4. Run Diagnosis", self._run_diagnosis)
 
         ttk.Label(outer, textvariable=self.status).pack(anchor=tk.W, pady=(0, 6))
         self.output = ScrolledText(outer, wrap=tk.WORD, height=15, font=("Segoe UI", 10))
@@ -192,6 +224,9 @@ class CoreWardenDesktop:
         path = filedialog.askopenfilename(title="Choose a Core-compatible RPC cookie")
         if path:
             self.rpc_cookie_path.set(path)
+
+    def _show_privacy(self) -> None:
+        messagebox.showinfo("CoreWarden privacy", PRIVACY_NOTICE)
 
     def _refresh_credential_status(self) -> None:
         messages = {

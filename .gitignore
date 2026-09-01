@@ -13,3 +13,4 @@ corewarden-evidence*.json
 !corewarden-evidence-live-healthy-success.json
 dist/
 build/
+release/

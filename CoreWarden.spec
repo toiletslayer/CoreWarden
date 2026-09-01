@@ -4,9 +4,19 @@ from pathlib import Path
 
 project_root = Path(SPECPATH)
 icon_path = project_root / "assets" / "corewarden.ico"
-datas = []
-if icon_path.exists():
-    datas.append((str(icon_path), "assets"))
+asset_paths = [
+    icon_path,
+    project_root / "assets" / "Sprite32.png",
+    project_root / "assets" / "Sprite64.png",
+    project_root / "assets" / "Sprite128.png",
+]
+missing_assets = [str(path) for path in asset_paths if not path.is_file()]
+if missing_assets:
+    raise FileNotFoundError(
+        "Missing CoreWarden branding assets. Run python scripts/build_icon.py first: "
+        + ", ".join(missing_assets)
+    )
+datas = [(str(path), "assets") for path in asset_paths]
 
 analysis = Analysis(
     [str(project_root / "src" / "corewarden" / "gui.py")],
@@ -39,7 +49,7 @@ exe = EXE(
     target_arch=None,
     codesign_identity=None,
     entitlements_file=None,
-    icon=str(icon_path) if icon_path.exists() else None,
+    icon=str(icon_path),
 )
 
 bundle = COLLECT(
