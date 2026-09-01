@@ -13,6 +13,10 @@ class ProviderError(CoreWardenError):
     """Raised when a model provider fails without exposing provider details or secrets."""
 
 
+class CredentialStorageError(CoreWardenError):
+    """Raised when an OS-backed credential cannot be stored or retrieved safely."""
+
+
 class RpcTransportError(CoreWardenError):
     """Raised when the RPC endpoint cannot be reached or decoded."""
 

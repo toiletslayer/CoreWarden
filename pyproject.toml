@@ -27,9 +27,13 @@ dependencies = [
 
 [project.optional-dependencies]
 dev = ["pytest>=8,<9", "pytest-cov>=5,<7", "ruff>=0.12,<1"]
+package = ["pyinstaller>=6.21,<7"]
 
 [project.scripts]
 corewarden = "corewarden.cli:main"
+
+[project.gui-scripts]
+corewarden-gui = "corewarden.gui:main"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/corewarden"]
@@ -37,6 +41,11 @@ packages = ["src/corewarden"]
 [tool.pytest.ini_options]
 addopts = "-q"
 testpaths = ["tests"]
+
+[tool.coverage.run]
+# The tkinter view is exercised by the packaged-app smoke test. Unit coverage
+# targets the desktop service/presenter logic instead of brittle widget events.
+omit = ["src/corewarden/gui.py"]
 
 [tool.ruff]
 line-length = 100

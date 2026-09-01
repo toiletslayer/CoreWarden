@@ -25,6 +25,7 @@ class FunctionCall:
 class FakeResponse:
     output: list[Any]
     output_text: str = ""
+    status: str | None = None
 
 
 class FakeResponses:
@@ -328,3 +329,48 @@ def test_openai_provider_rejects_empty_output_and_mapping_tool_calls() -> None:
         provider_for(responses).diagnose(
             FakeNode(), system_prompt="system", investigation_prompt="investigate"
         )
+
+
+def test_openai_configuration_test_is_small_tool_free_and_not_stored() -> None:
+    response = FakeResponse([], status="completed")
+    responses = FakeResponses([response])
+
+    provider_for(responses).test_configuration()
+
+    request = responses.calls[0]
+    assert request == {
+        "model": "gpt-5.6-luna",
+        "input": "Reply with exactly OK.",
+        "reasoning": {"effort": "none"},
+        "max_output_tokens": 16,
+        "service_tier": "default",
+        "store": False,
+    }
+
+
+def test_openai_configuration_test_normalizes_secret_bearing_failure() -> None:
+    secret = "sk-configuration-secret"
+
+    class FailingResponses:
+        def create(self, **kwargs: Any) -> FakeResponse:
+            raise RuntimeError(secret)
+
+    provider = OpenAIResponsesProvider(
+        api_key=secret,
+        client_factory=lambda api_key: FakeClient(FailingResponses()),
+    )
+
+    with pytest.raises(ProviderError) as caught:
+        provider.test_configuration()
+
+    assert str(caught.value) == (
+        "OpenAI configuration test failed; check the saved key and project access."
+    )
+    assert secret not in str(caught.value)
+
+
+def test_openai_configuration_test_rejects_failed_response_status() -> None:
+    response = FakeResponse([], status="failed")
+
+    with pytest.raises(ProviderError, match="configuration test failed"):
+        provider_for(FakeResponses([response])).test_configuration()

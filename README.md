@@ -152,9 +152,10 @@ are excluded.
 - for OpenAI: a user-supplied `OPENAI_API_KEY` with access to `gpt-5.6-luna`
 
 CoreWarden is BYO-credential software. It never contains a shared/public API key.
-The OpenAI key is read from the process environment only when `--provider openai`
-is explicitly selected, is passed directly to the official SDK, and is not
-stored by CoreWarden or written to diagnostic evidence.
+The CLI reads the OpenAI key from the process environment only when
+`--provider openai` is explicitly selected. The Windows desktop app can instead
+store the key in the current user's Windows Credential Manager. Neither path
+writes the key to application settings, logs, or diagnostic evidence.
 
 ## Setup
 
@@ -180,9 +181,11 @@ python -m pip install -e ".[dev]"
 
 ## Configuration
 
-CoreWarden reads configuration from environment variables only. It does not
-parse `.env` files itself, which avoids adding a second secret-loading mechanism.
-`.env.example` is a copyable reference and `.env` is git-ignored.
+The CLI reads configuration from environment variables only. It does not parse
+`.env` files itself, which avoids adding a second secret-loading mechanism.
+`.env.example` is a copyable reference and `.env` is git-ignored. The desktop
+app accepts settings in memory and persists only the OpenAI key, through Windows
+Credential Manager rather than a plaintext file.
 
 | Variable | Required | Default | Meaning |
 |---|---:|---|---|
@@ -246,6 +249,70 @@ Responses API calls with standard processing, low reasoning effort, response
 storage disabled, and structured JSON Schema output. It does not auto-detect an
 API key and never falls back to Bedrock. If `OPENAI_API_KEY` is missing, startup
 fails before any node tool runs or evidence file is created.
+
+## Windows desktop app
+
+Install and launch the native desktop entry point during development:
+
+```powershell
+python -m pip install -e .
+corewarden-gui
+```
+
+The small `tkinter` window provides:
+
+- explicit OpenAI or Bedrock selection;
+- RPC URL plus session-only username/password or generic RPC cookie-file input;
+- secure OpenAI-key save/remove actions;
+- separate provider and node configuration checks;
+- read-only diagnosis through the existing `diagnose()` workflow;
+- a concise classification, confidence, summary, evidence, and safety result.
+
+When an OpenAI key is saved, it is stored as a generic credential named
+`CoreWarden/OpenAI` in the current Windows user's Credential Manager. The entry
+field is cleared immediately and the full value is never displayed again. The
+desktop app checks this credential first and retains `OPENAI_API_KEY` as a
+power-user fallback. RPC credentials and cookie contents are held only for the
+current process and are never saved by CoreWarden.
+
+Bedrock uses the existing AWS CLI/profile/session credential chain. The desktop
+provider check validates the selected AWS identity and creates the Bedrock
+runtime path without storing AWS access keys. Actual model permission is
+confirmed only when a diagnosis is run, avoiding a separate paid inference test.
+
+OpenAI's provider check makes one small, tool-free `gpt-5.6-luna` Responses API
+request with `store=False`. It does not contact the node or start the diagnostic
+tool loop. The node check makes one allowed read-only blockchain-status call and
+does not invoke a model.
+
+### Build the Windows bundle
+
+Build on Windows with the included PowerShell script:
+
+```powershell
+.\scripts\build_windows.ps1
+```
+
+The script installs the `package` optional dependency and runs the checked-in
+PyInstaller specification. Its output is the one-folder bundle:
+
+```text
+dist\CoreWarden\CoreWarden.exe
+```
+
+Copy the entire `dist\CoreWarden` directory when distributing it. The judge does
+not need a separate Python installation, but still needs a reachable local node
+and either their own OpenAI project key or an authenticated AWS profile/session.
+A one-folder build is used instead of a one-file archive for more predictable
+startup and easier dependency inspection.
+
+For final branding, place a Windows icon at `assets\corewarden.ico` before the
+build. Both the executable and GUI discover that file automatically. Packaging
+continues with the default icon when it is absent.
+
+Known limitations: this is a Windows-first local bundle, not an installer; it
+does not create accounts, configure a node, persist RPC secrets, refresh expired
+AWS sessions, sign the executable, or bypass Windows reputation warnings.
 
 Successful output is one validated JSON document. Expected configuration, RPC,
 and structured-output failures are emitted as JSON on stderr with exit code 2.

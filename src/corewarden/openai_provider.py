@@ -201,3 +201,24 @@ class OpenAIResponsesProvider:
                 )
 
         raise ProviderError(f"OpenAI tool-call iteration limit reached ({self.max_iterations})")
+
+    def test_configuration(self) -> None:
+        """Make one small, tool-free request to validate OpenAI authentication and access."""
+        try:
+            client = self.client_factory(self.api_key)
+            response = client.responses.create(
+                model=self.model,
+                input="Reply with exactly OK.",
+                reasoning={"effort": "none"},
+                max_output_tokens=16,
+                service_tier="default",
+                store=False,
+            )
+        except Exception:
+            raise ProviderError(
+                "OpenAI configuration test failed; check the saved key and project access."
+            ) from None
+        if getattr(response, "status", None) == "failed":
+            raise ProviderError(
+                "OpenAI configuration test failed; check the saved key and project access."
+            )
