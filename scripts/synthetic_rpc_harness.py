@@ -11,6 +11,8 @@ import base64
 import json
 import tempfile
 import threading
+import time
+from contextlib import suppress
 from copy import deepcopy
 from dataclasses import dataclass, field
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -34,8 +36,25 @@ SCENARIO_NAMES = (
     "degraded_header_gap",
     "degraded_warning",
     "recovered",
+    "rpc_unauthorized",
+    "rpc_timeout",
+    "malformed_json",
+    "response_not_object",
+    "missing_result",
+    "invalid_network_result_type",
+    "partial_getblockchaininfo_failure",
+    "partial_getnetworkinfo_failure",
+    "partial_getpeerinfo_failure",
+    "partial_getchaintips_failure",
 )
 _MAX_REQUEST_BYTES = 64 * 1024
+_TIMEOUT_DELAY_SECONDS = 0.2
+_PARTIAL_FAILURE_METHODS = {
+    "partial_getblockchaininfo_failure": "getblockchaininfo",
+    "partial_getnetworkinfo_failure": "getnetworkinfo",
+    "partial_getpeerinfo_failure": "getpeerinfo",
+    "partial_getchaintips_failure": "getchaintips",
+}
 
 
 def _healthy() -> dict[str, Any]:
@@ -148,13 +167,17 @@ class _SyntheticHandler(BaseHTTPRequestHandler):
     def log_message(self, format: str, *args: Any) -> None:
         return
 
-    def _send(self, status: int, document: dict[str, Any]) -> None:
+    def _send(self, status: int, document: Any) -> None:
         body = json.dumps(document, separators=(",", ":")).encode("utf-8")
-        self.send_response(status)
-        self.send_header("Content-Type", "application/json")
-        self.send_header("Content-Length", str(len(body)))
-        self.end_headers()
-        self.wfile.write(body)
+        self._send_raw(status, body)
+
+    def _send_raw(self, status: int, body: bytes) -> None:
+        with suppress(OSError):
+            self.send_response(status)
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
 
     def _authorized(self) -> bool:
         token = base64.b64encode(f"{TEST_RPC_USERNAME}:{TEST_RPC_PASSWORD}".encode()).decode(
@@ -206,7 +229,6 @@ class _SyntheticHandler(BaseHTTPRequestHandler):
             return
         try:
             scenario = self.server.controller.current()
-            result = scenario_payload(scenario)[method]
         except (OSError, ValueError):
             self._send(
                 200,
@@ -219,6 +241,36 @@ class _SyntheticHandler(BaseHTTPRequestHandler):
             return
         with self.server.calls_lock:
             self.server.calls.append((scenario, method))
+
+        if scenario == "rpc_unauthorized":
+            self._send(401, {"error": "synthetic authorization failure"})
+            return
+        if scenario == "rpc_timeout":
+            time.sleep(_TIMEOUT_DELAY_SECONDS)
+        if scenario == "malformed_json":
+            self._send_raw(200, b"{malformed synthetic response")
+            return
+        if scenario == "response_not_object":
+            self._send(200, [])
+            return
+        if scenario == "missing_result":
+            self._send(200, {"error": None, "id": request_id})
+            return
+        failing_method = _PARTIAL_FAILURE_METHODS.get(scenario)
+        if method == failing_method:
+            self._send(
+                200,
+                {
+                    "result": None,
+                    "error": {"code": -32000, "message": "Synthetic read failure"},
+                    "id": request_id,
+                },
+            )
+            return
+
+        result = scenario_payload(scenario)[method]
+        if scenario == "invalid_network_result_type" and method == "getnetworkinfo":
+            result = ["not", "an", "object"]
         self._send(200, {"result": result, "error": None, "id": request_id})
 
 

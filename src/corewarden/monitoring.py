@@ -5,6 +5,7 @@ from __future__ import annotations
 import hashlib
 import json
 import threading
+import time
 from collections import deque
 from collections.abc import Callable, Mapping, Sequence
 from contextlib import suppress
@@ -17,6 +18,7 @@ from corewarden.models import Diagnosis
 from corewarden.node import CoreNode
 
 DEFAULT_MONITORING_INTERVAL_SECONDS = 5 * 60
+DEFAULT_RECURRENCE_COOLDOWN_SECONDS = 30 * 60
 SUPPORTED_MONITORING_INTERVAL_MINUTES = (5, 10, 15, 30, 60)
 DEFAULT_HISTORY_LIMIT = 20
 
@@ -213,6 +215,7 @@ class MonitoringService:
     status_callback: Callable[[MonitoringStatus], None] | None = field(default=None, repr=False)
     event_callback: Callable[[MonitoringEvent], None] | None = field(default=None, repr=False)
     provider_name: str | None = None
+    monotonic_clock: Callable[[], float] = field(default=time.monotonic, repr=False)
     _events: deque[MonitoringEvent] = field(init=False, repr=False)
     _lock: threading.RLock = field(default_factory=threading.RLock, init=False, repr=False)
     _cycle_lock: threading.Lock = field(default_factory=threading.Lock, init=False, repr=False)
@@ -222,7 +225,7 @@ class MonitoringService:
     _snapshot: HealthSnapshot | None = field(default=None, init=False, repr=False)
     _last_ai_at: datetime | None = field(default=None, init=False, repr=False)
     _last_ai_status: str = field(default="Never", init=False)
-    _investigated_fingerprints: set[str] = field(default_factory=set, init=False, repr=False)
+    _incident_boundaries: dict[str, float] = field(default_factory=dict, init=False, repr=False)
 
     def __post_init__(self) -> None:
         if self.interval_seconds < 60:
@@ -337,7 +340,14 @@ class MonitoringService:
                 and previous.state is not HealthState.HEALTHY
                 and snapshot.state is HealthState.HEALTHY
             )
+            cycle_time = self.monotonic_clock()
             if recovered:
+                if (
+                    previous is not None
+                    and previous.state is HealthState.DEGRADED
+                    and previous.fingerprint in self._incident_boundaries
+                ):
+                    self._incident_boundaries[previous.fingerprint] = cycle_time
                 self._record(
                     "Node recovered",
                     snapshot.state,
@@ -364,14 +374,19 @@ class MonitoringService:
                     fingerprint_category=snapshot.fingerprint,
                 )
 
+            prior_boundary = self._incident_boundaries.get(snapshot.fingerprint)
+            recurrence_eligible = (
+                prior_boundary is None
+                or cycle_time - prior_boundary >= DEFAULT_RECURRENCE_COOLDOWN_SECONDS
+            )
             should_investigate = (
                 snapshot.state is HealthState.DEGRADED
                 and changed
-                and snapshot.fingerprint not in self._investigated_fingerprints
+                and recurrence_eligible
                 and not self._stop_event.is_set()
             )
             if should_investigate:
-                self._investigated_fingerprints.add(snapshot.fingerprint)
+                self._incident_boundaries[snapshot.fingerprint] = cycle_time
                 self._last_ai_at = datetime.now(timezone.utc)
                 self._record(
                     "AI investigation started",

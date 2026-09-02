@@ -51,15 +51,16 @@ def test_bedrock_provider_preserves_strands_behavior(monkeypatch: pytest.MonkeyP
     assert invocations == [("investigate now", {"structured_output_model": Diagnosis})]
 
 
-def test_bedrock_provider_rejects_missing_structured_output(
-    monkeypatch: pytest.MonkeyPatch,
+@pytest.mark.parametrize("structured", [None, {"classification": "healthy"}])
+def test_bedrock_provider_rejects_missing_or_malformed_structured_output(
+    monkeypatch: pytest.MonkeyPatch, structured: Any
 ) -> None:
     class EmptyAgent:
         def __init__(self, **kwargs: Any) -> None:
             pass
 
         def __call__(self, prompt: str, **kwargs: Any) -> Result:
-            return Result(None)
+            return Result(structured)
 
     monkeypatch.setattr("corewarden.bedrock.Agent", EmptyAgent)
 

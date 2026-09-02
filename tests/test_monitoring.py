@@ -11,6 +11,7 @@ from corewarden.history import HistoryStore, persisted_event_from_monitoring
 from corewarden.monitoring import (
     DEFAULT_HISTORY_LIMIT,
     DEFAULT_MONITORING_INTERVAL_SECONDS,
+    DEFAULT_RECURRENCE_COOLDOWN_SECONDS,
     HealthSnapshot,
     HealthState,
     MonitoringService,
@@ -39,6 +40,17 @@ class HealthyNode:
         return [{"height": 100, "branchlen": 0, "status": "active"}]
 
 
+class MonotonicClock:
+    def __init__(self) -> None:
+        self.value = 0.0
+
+    def __call__(self) -> float:
+        return self.value
+
+    def advance(self, seconds: float) -> None:
+        self.value += seconds
+
+
 def snapshot(state: HealthState, fingerprint: str, *reasons: str) -> HealthSnapshot:
     return HealthSnapshot(
         state=state,
@@ -63,6 +75,7 @@ def test_default_interval_is_five_minutes_and_sub_minute_is_rejected() -> None:
     service = MonitoringService(lambda: snapshot(HealthState.HEALTHY, "h"), sample_diagnosis)
 
     assert DEFAULT_MONITORING_INTERVAL_SECONDS == 300
+    assert DEFAULT_RECURRENCE_COOLDOWN_SECONDS == 1800
     assert service.interval_seconds == 300
     try:
         MonitoringService(lambda: snapshot(HealthState.HEALTHY, "h"), sample_diagnosis, 59)
@@ -140,6 +153,72 @@ def test_materially_changed_degradation_can_trigger_new_investigation() -> None:
     assert diagnoses == ["called", "called"]
 
 
+def test_same_fault_recurrence_is_suppressed_until_recovery_cooldown_expires() -> None:
+    clock = MonotonicClock()
+    diagnoses: list[str] = []
+    values = iter(
+        [
+            snapshot(HealthState.DEGRADED, "fault-a", "No peer connections"),
+            snapshot(HealthState.DEGRADED, "fault-a", "No peer connections"),
+            snapshot(HealthState.HEALTHY, "healthy"),
+            snapshot(HealthState.DEGRADED, "fault-a", "No peer connections"),
+            snapshot(HealthState.HEALTHY, "healthy"),
+            snapshot(HealthState.DEGRADED, "fault-a", "No peer connections"),
+            snapshot(HealthState.DEGRADED, "fault-a", "No peer connections"),
+        ]
+    )
+    service = MonitoringService(
+        snapshot_source=lambda: next(values),
+        diagnosis_runner=lambda: diagnoses.append("called") or sample_diagnosis(),
+        monotonic_clock=clock,
+    )
+    service._active = True
+
+    service.run_cycle()
+    service.run_cycle()
+    service.run_cycle()
+    clock.advance(DEFAULT_RECURRENCE_COOLDOWN_SECONDS - 1)
+    service.run_cycle()
+    service.run_cycle()
+    assert diagnoses == ["called"]
+
+    clock.advance(DEFAULT_RECURRENCE_COOLDOWN_SECONDS + 1)
+    service.run_cycle()
+    service.run_cycle()
+
+    assert diagnoses == ["called", "called"]
+    assert sum(event.event_type == "recovery" for event in service.status.events) == 2
+    assert sum(event.event_type == "investigation_started" for event in service.status.events) == 2
+
+
+def test_rapid_same_fault_flapping_within_cooldown_does_not_storm_provider() -> None:
+    clock = MonotonicClock()
+    diagnoses: list[str] = []
+    values = iter(
+        [
+            snapshot(HealthState.HEALTHY, "healthy"),
+            snapshot(HealthState.DEGRADED, "fault-a", "No peer connections"),
+            snapshot(HealthState.HEALTHY, "healthy"),
+            snapshot(HealthState.DEGRADED, "fault-a", "No peer connections"),
+            snapshot(HealthState.HEALTHY, "healthy"),
+            snapshot(HealthState.DEGRADED, "fault-a", "No peer connections"),
+        ]
+    )
+    service = MonitoringService(
+        snapshot_source=lambda: next(values),
+        diagnosis_runner=lambda: diagnoses.append("called") or sample_diagnosis(),
+        monotonic_clock=clock,
+    )
+    service._active = True
+
+    for _ in range(6):
+        service.run_cycle()
+        clock.advance(60)
+
+    assert diagnoses == ["called"]
+    assert sum(event.event_type == "recovery" for event in service.status.events) == 2
+
+
 def test_recovery_is_recorded_without_recovery_ai_call() -> None:
     diagnoses: list[str] = []
     service = service_for(
@@ -202,6 +281,45 @@ def test_provider_failure_is_recorded_once_and_monitoring_continues() -> None:
     history = " ".join(event.message for event in service.status.events)
     assert "provider secret detail" not in history
     assert "deterministic monitoring continues" in history
+
+
+def test_failed_investigation_uses_the_same_recurrence_cooldown_policy() -> None:
+    clock = MonotonicClock()
+    values = iter(
+        [
+            snapshot(HealthState.DEGRADED, "fault-a", "No peer connections"),
+            snapshot(HealthState.DEGRADED, "fault-a", "No peer connections"),
+            snapshot(HealthState.HEALTHY, "healthy"),
+            snapshot(HealthState.DEGRADED, "fault-a", "No peer connections"),
+            snapshot(HealthState.HEALTHY, "healthy"),
+            snapshot(HealthState.DEGRADED, "fault-a", "No peer connections"),
+            snapshot(HealthState.DEGRADED, "fault-a", "No peer connections"),
+        ]
+    )
+    calls = 0
+
+    def fail() -> Any:
+        nonlocal calls
+        calls += 1
+        raise RuntimeError("provider secret detail")
+
+    service = MonitoringService(
+        snapshot_source=lambda: next(values),
+        diagnosis_runner=fail,
+        monotonic_clock=clock,
+    )
+    service._active = True
+
+    for _ in range(5):
+        service.run_cycle()
+    assert calls == 1
+
+    clock.advance(DEFAULT_RECURRENCE_COOLDOWN_SECONDS)
+    service.run_cycle()
+    service.run_cycle()
+
+    assert calls == 2
+    assert sum(event.event_type == "investigation_failed" for event in service.status.events) == 2
 
 
 def test_unexpected_snapshot_failure_becomes_safe_unavailable_state() -> None:
