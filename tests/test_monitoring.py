@@ -3,9 +3,11 @@ from __future__ import annotations
 import json
 import threading
 from datetime import datetime, timezone
+from pathlib import Path
 from typing import Any
 
 from corewarden.errors import RpcTransportError
+from corewarden.history import HistoryStore, persisted_event_from_monitoring
 from corewarden.monitoring import (
     DEFAULT_HISTORY_LIMIT,
     DEFAULT_MONITORING_INTERVAL_SECONDS,
@@ -292,3 +294,76 @@ def test_partial_observations_degrade_without_arbitrary_node_calls() -> None:
     assert result.state is HealthState.DEGRADED
     assert node.calls == ["blockchain", "network", "peers", "tips"]
     assert "Incomplete network status" in result.reasons
+
+
+def test_persistent_audit_trail_records_transitions_and_deduplicated_investigation(
+    tmp_path: Path,
+) -> None:
+    values = iter(
+        [
+            snapshot(HealthState.HEALTHY, "healthy"),
+            snapshot(HealthState.DEGRADED, "no-peers", "No peer connections"),
+            snapshot(HealthState.DEGRADED, "no-peers", "No peer connections"),
+            snapshot(HealthState.HEALTHY, "recovered"),
+        ]
+    )
+    calls: list[str] = []
+    store = HistoryStore(tmp_path / "history.json")
+
+    def persist(source: Any) -> None:
+        projected = persisted_event_from_monitoring(source)
+        assert projected is not None
+        store.append(projected)
+
+    service = MonitoringService(
+        snapshot_source=lambda: next(values),
+        diagnosis_runner=lambda: calls.append("provider") or sample_diagnosis(),
+        event_callback=persist,
+        provider_name="Amazon Bedrock / Strands",
+    )
+    service._active = True
+
+    for _ in range(4):
+        service.run_cycle()
+
+    assert calls == ["provider"]
+    events = store.events()
+    assert [item.event_type for item in events] == [
+        "health",
+        "degradation",
+        "investigation_started",
+        "investigation_completed",
+        "recovery",
+    ]
+    completed = next(item for item in events if item.event_type == "investigation_completed")
+    assert completed.provider == "Amazon Bedrock / Strands"
+    assert completed.classification == "healthy"
+    assert completed.confidence == 0.9
+
+
+def test_provider_failure_persists_only_safe_failure_category(tmp_path: Path) -> None:
+    store = HistoryStore(tmp_path / "history.json")
+
+    def persist(source: Any) -> None:
+        projected = persisted_event_from_monitoring(source)
+        assert projected is not None
+        store.append(projected)
+
+    service = MonitoringService(
+        snapshot_source=lambda: snapshot(HealthState.DEGRADED, "problem", "No peer connections"),
+        diagnosis_runner=lambda: (_ for _ in ()).throw(
+            RuntimeError("sk-fake private-node.example 203.0.113.42")
+        ),
+        event_callback=persist,
+        provider_name="OpenAI",
+    )
+    service._active = True
+
+    service.run_cycle()
+
+    failed = next(item for item in store.events() if item.event_type == "investigation_failed")
+    assert failed.provider == "OpenAI"
+    assert failed.provider_failure_category == "provider_invocation_failed"
+    serialized = (tmp_path / "history.json").read_text(encoding="utf-8")
+    for forbidden in ("sk-fake", "private-node.example", "203.0.113.42"):
+        assert forbidden not in serialized

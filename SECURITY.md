@@ -26,5 +26,13 @@ passwords and cookie contents are session-only in the desktop app. The synthetic
 harness credentials are public test fixtures and must never be replaced with
 real node credentials.
 
+Sanitized monitoring history is stored only in the current user's non-roaming
+`%LOCALAPPDATA%\CoreWarden\history` directory and is capped at 1000 events. The
+persisted/exported schema is allow-listed and contains controlled event reasons and
+validated investigation metadata, never raw RPC/provider payloads, prompts, arbitrary
+exceptions, credentials, peer identifiers, addresses, endpoints, hostnames, client
+subversions, AS mappings, proxy data, wallet data, or transaction data. JSON/CSV
+exports should still be treated as local operational records and shared deliberately.
+
 CoreWarden is a diagnostic aid, not a consensus oracle or a replacement for node
 monitoring and human judgment.

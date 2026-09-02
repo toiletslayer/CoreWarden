@@ -41,6 +41,12 @@ class MonitoringEvent:
     occurred_at: datetime
     message: str
     state: HealthState | None = None
+    event_type: str = "health"
+    reasons: tuple[str, ...] = ()
+    fingerprint_category: str | None = None
+    provider: str | None = None
+    classification: str | None = None
+    confidence: float | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -205,6 +211,8 @@ class MonitoringService:
     interval_seconds: float = DEFAULT_MONITORING_INTERVAL_SECONDS
     history_limit: int = DEFAULT_HISTORY_LIMIT
     status_callback: Callable[[MonitoringStatus], None] | None = field(default=None, repr=False)
+    event_callback: Callable[[MonitoringEvent], None] | None = field(default=None, repr=False)
+    provider_name: str | None = None
     _events: deque[MonitoringEvent] = field(init=False, repr=False)
     _lock: threading.RLock = field(default_factory=threading.RLock, init=False, repr=False)
     _cycle_lock: threading.Lock = field(default_factory=threading.Lock, init=False, repr=False)
@@ -241,9 +249,35 @@ class MonitoringService:
             with suppress(Exception):
                 callback(self.status)
 
-    def _record(self, message: str, state: HealthState | None = None) -> None:
+    def _record(
+        self,
+        message: str,
+        state: HealthState | None = None,
+        *,
+        event_type: str = "health",
+        reasons: tuple[str, ...] = (),
+        fingerprint_category: str | None = None,
+        provider: str | None = None,
+        classification: str | None = None,
+        confidence: float | None = None,
+    ) -> None:
+        event = MonitoringEvent(
+            datetime.now(timezone.utc),
+            message,
+            state,
+            event_type,
+            reasons,
+            fingerprint_category,
+            provider,
+            classification,
+            confidence,
+        )
         with self._lock:
-            self._events.append(MonitoringEvent(datetime.now(timezone.utc), message, state))
+            self._events.append(event)
+        callback = self.event_callback
+        if callback is not None:
+            with suppress(Exception):
+                callback(event)
 
     def start(self) -> bool:
         with self._lock:
@@ -251,7 +285,7 @@ class MonitoringService:
                 return False
             self._active = True
             self._stop_event.clear()
-            self._record("Monitoring started")
+            self._record("Monitoring started", event_type="monitoring_started")
             self._thread = threading.Thread(
                 target=self._run_loop, daemon=True, name="corewarden-monitor"
             )
@@ -266,7 +300,7 @@ class MonitoringService:
             self._active = False
             self._stop_event.set()
             thread = self._thread
-            self._record("Monitoring stopped")
+            self._record("Monitoring stopped", event_type="monitoring_stopped")
         if wait and thread is not None and thread is not threading.current_thread():
             thread.join(timeout)
         self._publish()
@@ -304,7 +338,12 @@ class MonitoringService:
                 and snapshot.state is HealthState.HEALTHY
             )
             if recovered:
-                self._record("Node recovered", snapshot.state)
+                self._record(
+                    "Node recovered",
+                    snapshot.state,
+                    event_type="recovery",
+                    fingerprint_category=snapshot.fingerprint,
+                )
             elif (
                 previous is None
                 or previous.state is not snapshot.state
@@ -312,7 +351,18 @@ class MonitoringService:
             ):
                 detail = "; ".join(snapshot.reasons)
                 message = snapshot.state.value.title()
-                self._record(f"{message}: {detail}" if detail else message, snapshot.state)
+                event_type = {
+                    HealthState.HEALTHY: "health",
+                    HealthState.DEGRADED: "degradation",
+                    HealthState.UNAVAILABLE: "unavailable",
+                }[snapshot.state]
+                self._record(
+                    f"{message}: {detail}" if detail else message,
+                    snapshot.state,
+                    event_type=event_type,
+                    reasons=snapshot.reasons,
+                    fingerprint_category=snapshot.fingerprint,
+                )
 
             should_investigate = (
                 snapshot.state is HealthState.DEGRADED
@@ -323,16 +373,36 @@ class MonitoringService:
             if should_investigate:
                 self._investigated_fingerprints.add(snapshot.fingerprint)
                 self._last_ai_at = datetime.now(timezone.utc)
+                self._record(
+                    "AI investigation started",
+                    snapshot.state,
+                    event_type="investigation_started",
+                    reasons=snapshot.reasons,
+                    fingerprint_category=snapshot.fingerprint,
+                    provider=self.provider_name,
+                )
                 try:
                     diagnosis = self.diagnosis_runner()
                 except Exception:
                     self._last_ai_status = "Failed"
-                    self._record("AI investigation failed; deterministic monitoring continues")
+                    self._record(
+                        "AI investigation failed; deterministic monitoring continues",
+                        snapshot.state,
+                        event_type="investigation_failed",
+                        provider=self.provider_name,
+                    )
                 else:
                     self._last_ai_status = (
                         f"{diagnosis.classification.value} ({diagnosis.confidence:.0%})"
                     )
-                    self._record(f"AI investigation: {self._last_ai_status}")
+                    self._record(
+                        f"AI investigation: {self._last_ai_status}",
+                        snapshot.state,
+                        event_type="investigation_completed",
+                        provider=self.provider_name,
+                        classification=diagnosis.classification.value,
+                        confidence=diagnosis.confidence,
+                    )
             self._publish()
             return True
         finally:

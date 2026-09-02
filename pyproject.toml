@@ -23,6 +23,8 @@ classifiers = [
 dependencies = [
   "botocore[crt]>=1.43.63,<2",
   "openai>=3.6,<4",
+  "Pillow>=10,<13",
+  "pystray>=0.19.5,<1",
   "pydantic>=2.7,<3",
   "strands-agents>=1.54,<2",
 ]

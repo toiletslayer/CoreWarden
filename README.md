@@ -41,7 +41,7 @@ and RPC unavailability does not create a provider retry storm.
   unavailable.
 - Cost-free synthetic acceptance covering degradation, deduplication, changed
   degradation, recovery, unavailability, and provider-visible privacy.
-- 99 passing tests and 91% coverage at the current checkpoint.
+- 123 passing tests and 91% coverage at the current checkpoint.
 
 The committed [live evidence artifact](corewarden-evidence-live-healthy-success.json)
 contains the four sanitized observations and validated diagnosis. Its privacy
@@ -294,6 +294,8 @@ The small `tkinter` window provides:
 - separate provider and node configuration checks;
 - read-only diagnosis through the existing `diagnose()` workflow;
 - optional local monitoring at 5, 10, 15, 30, or 60-minute intervals;
+- persistent sanitized local history with JSON and CSV export;
+- Windows system-tray operation while monitoring is active;
 - a concise classification, confidence, summary, evidence, and safety result.
 
 ### Optional local monitoring
@@ -303,17 +305,49 @@ then checks at the selected interval (5 minutes by default). Each check calls on
 read-only methods through `CoreRpcNodeAdapter`, so peer and endpoint privacy filtering occurs
 before the monitoring policy or a provider can receive observations.
 
-The local policy reports `healthy`, `degraded`, or `unavailable`. It records a small in-memory
-history of state transitions and meaningful condition changes. Healthy steady state never invokes
+The local policy reports `healthy`, `degraded`, or `unavailable`. It records state transitions,
+meaningful condition changes, and controlled investigation outcomes in sanitized local history.
+Healthy steady state never invokes
 AI. A new or materially changed degraded fingerprint invokes the existing diagnosis workflow once;
 the same unchanged problem, including a failed provider attempt, is deduplicated for the remainder
 of that monitoring session. RPC unavailability is recorded locally without invoking AI, and
 recovery is recorded without a recovery model call. Monitoring never retries a provider simply
 because another timer cycle elapsed.
 
-The monitor and model investigation run off the tkinter UI thread. Cycles do not overlap, duplicate
-monitoring loops are rejected, and closing the window signals monitoring to stop. Event history is
-bounded to 20 controlled, non-secret messages and is not persisted.
+The monitor and model investigation run off the tkinter UI thread. Cycles do not overlap and
+duplicate monitoring loops are rejected. The recent-event panel remains bounded to 20 entries.
+
+### Persistent history, export, and background operation
+
+The Windows app keeps the newest 1000 allow-listed monitoring events in:
+
+```text
+%LOCALAPPDATA%\CoreWarden\history\monitoring-history.json
+```
+
+Writes use atomic replacement. A corrupt file never prevents startup; CoreWarden leaves it intact
+and preserves it with a `.corrupt-<timestamp>` suffix before the next successful write. The
+**History** dialog reviews prior sessions without contacting a node or provider. User-triggered
+exports are available as authoritative structured JSON and flattened CSV.
+
+Event timestamps are stored canonically as UTC ISO-8601 values and are not rewritten when the
+History dialog is opened. The dialog derives its human-readable date/time from the current Windows
+system timezone and displays an explicit UTC offset. JSON exports retain the authoritative UTC
+`timestamp`. CSV retains that UTC value and adds derived `timestamp_local` and `timezone` columns
+for human review; those convenience columns are not part of the persisted event schema.
+
+Persisted fields are limited to event time/type, health state, controlled reason, degradation
+category, whether investigation occurred, selected provider, validated classification/confidence,
+safe provider-failure category, and recovery status. CoreWarden never puts RPC/provider credentials,
+authorization data, raw RPC payloads, peer addresses or identifiers, endpoints, hostnames, client
+subversions, AS/proxy data, arbitrary exception strings, prompts, or raw model responses into this
+history. History stays on the local machine; there is no telemetry or cloud history service.
+
+When monitoring is active, closing the window hides CoreWarden to the Windows system tray and
+monitoring continues. A one-time local notice explains this behavior. The tray menu can restore the
+single existing window, start or stop the existing monitoring service, or **Quit CoreWarden**.
+Explicit Quit stops monitoring, removes the tray icon, and exits. When monitoring is idle, closing
+the window exits normally and does not force tray residency.
 
 For a cost-free local transition demonstration using a loopback-only synthetic Core RPC endpoint,
 see [SYNTHETIC-MONITORING-DEMO.md](SYNTHETIC-MONITORING-DEMO.md). The harness is development-only
@@ -466,8 +500,8 @@ and a fake provider; no paid API or real node is contacted.
 ## Deliberately deferred
 
 Remediation, restarts, wallet functionality, general-purpose dashboards, cloud deployment, fleet
-management, transaction sending, chain-specific policy thresholds, persistent
-state beyond opt-in local evidence capture, and arbitrary RPC remain out of scope.
+management, transaction sending, chain-specific policy thresholds, and arbitrary RPC remain out of
+scope.
 Hosted/shared inference, provider auto-routing, credential GUIs or storage,
 Ollama, direct Anthropic integration, and automatic fallback also remain out of
 scope.

@@ -19,6 +19,14 @@ from corewarden.credentials import (
     CredentialStore,
 )
 from corewarden.errors import ConfigurationError, CoreWardenError, ProviderError
+from corewarden.history import (
+    HistoryStore,
+    LocalPreferences,
+    SanitizedHistoryEvent,
+    default_history_path,
+    default_preferences_path,
+    persisted_event_from_monitoring,
+)
 from corewarden.models import Diagnosis
 from corewarden.monitoring import MonitoringService, MonitoringStatus, evaluate_health
 from corewarden.openai_provider import OpenAIResponsesProvider
@@ -147,11 +155,17 @@ class DesktopService:
     )
     node_factory: Callable[[Settings], Any] | None = field(default=None, repr=False)
     diagnosis_runner: Callable[[Any, Any], Diagnosis] = field(default=diagnose, repr=False)
+    history_store: HistoryStore | None = field(default=None, repr=False)
+    preferences: LocalPreferences | None = field(default=None, repr=False)
     _diagnosis_lock: threading.Lock = field(default_factory=threading.Lock, init=False, repr=False)
 
     def __post_init__(self) -> None:
         if self.node_factory is None:
             self.node_factory = self._default_node_factory
+        if self.history_store is None:
+            self.history_store = HistoryStore(default_history_path(self.environment))
+        if self.preferences is None:
+            self.preferences = LocalPreferences(default_preferences_path(self.environment))
 
     @staticmethod
     def _default_node_factory(settings: Settings) -> CoreRpcNodeAdapter:
@@ -246,12 +260,42 @@ class DesktopService:
     ) -> MonitoringService:
         """Build monitoring over the same sanitized adapter and diagnosis workflow."""
         settings = configuration.settings()
+
+        def persist_event(event: Any) -> None:
+            if self.history_store is None:
+                return
+            persisted = persisted_event_from_monitoring(event)
+            if persisted is not None:
+                self.history_store.append(persisted)
+
+        provider_name = {
+            "openai": "OpenAI",
+            "bedrock": "Amazon Bedrock / Strands",
+        }.get(configuration.provider)
         return MonitoringService(
             snapshot_source=lambda: evaluate_health(self._node(settings)),
             diagnosis_runner=lambda: self.run_diagnosis(configuration).diagnosis,
             interval_seconds=interval_seconds,
             status_callback=status_callback,
+            event_callback=persist_event,
+            provider_name=provider_name,
         )
+
+    def history_events(self) -> tuple[SanitizedHistoryEvent, ...]:
+        return self.history_store.events() if self.history_store is not None else ()
+
+    def history_warning(self) -> str | None:
+        return self.history_store.warning if self.history_store is not None else None
+
+    def export_history_json(self, destination: Path) -> None:
+        if self.history_store is None:
+            raise OSError("history unavailable")
+        self.history_store.export_json(destination)
+
+    def export_history_csv(self, destination: Path) -> None:
+        if self.history_store is None:
+            raise OSError("history unavailable")
+        self.history_store.export_csv(destination)
 
     def _node(self, settings: Settings) -> Any:
         if self.node_factory is None:

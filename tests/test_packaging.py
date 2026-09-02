@@ -33,6 +33,9 @@ def test_windows_packaging_configuration_has_expected_safety_shape() -> None:
     assert 'Assert-NativeCommand "Release ZIP build"' in script
     assert 'corewarden-gui = "corewarden.gui:main"' in pyproject
     assert '"botocore[crt]>=1.43.63,<2"' in pyproject
+    assert '"Pillow>=10,<13"' in pyproject
+    assert '"pystray>=0.19.5,<1"' in pyproject
+    assert '"pystray._win32"' in spec
 
 
 def test_approved_branding_assets_are_unchanged_and_ico_embeds_native_pngs() -> None:

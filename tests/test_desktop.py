@@ -13,6 +13,7 @@ from corewarden.desktop import (
     _temporary_aws_environment,
 )
 from corewarden.errors import ConfigurationError, CredentialStorageError
+from corewarden.history import HistoryStore, SanitizedHistoryEvent
 from tests.test_agent import FakeNode, sample_diagnosis
 
 
@@ -230,7 +231,9 @@ def test_desktop_service_rejects_unknown_provider() -> None:
         service.run_diagnosis(configuration("other"))
 
 
-def test_desktop_monitor_reuses_sanitized_node_and_selected_provider(monkeypatch: Any) -> None:
+def test_desktop_monitor_reuses_sanitized_node_and_selected_provider(
+    monkeypatch: Any, tmp_path: Any
+) -> None:
     node = FakeNode()
     diagnoses: list[Any] = []
 
@@ -249,6 +252,7 @@ def test_desktop_monitor_reuses_sanitized_node_and_selected_provider(monkeypatch
         environment={},
         node_factory=lambda settings: node,
         diagnosis_runner=run,
+        history_store=HistoryStore(tmp_path / "history.json"),
     )
     monitor = service.create_monitor(configuration(), interval_seconds=300)
     monitor._active = True
@@ -256,3 +260,29 @@ def test_desktop_monitor_reuses_sanitized_node_and_selected_provider(monkeypatch
     assert monitor.run_cycle() is True
     assert diagnoses == []
     assert monitor.status.current_state.value == "healthy"
+
+
+def test_desktop_history_read_and_export_make_no_node_or_provider_calls(tmp_path: Any) -> None:
+    store = HistoryStore(tmp_path / "history.json")
+    store.append(
+        SanitizedHistoryEvent(
+            timestamp="2026-09-01T00:00:00Z",
+            event_type="health",
+            state="healthy",
+            reason="Healthy",
+        )
+    )
+    calls: list[str] = []
+    service = DesktopService(
+        FakeStore(),
+        environment={},
+        node_factory=lambda _settings: calls.append("node"),
+        diagnosis_runner=lambda _node, _provider: calls.append("provider"),
+        history_store=store,
+    )
+
+    assert len(service.history_events()) == 1
+    service.export_history_json(tmp_path / "export.json")
+    service.export_history_csv(tmp_path / "export.csv")
+
+    assert calls == []

@@ -10,6 +10,8 @@ flowchart TB
     User --> CLI[CLI]
     GUI --> Desktop[DesktopService]
     Desktop --> Monitor[MonitoringService]
+    Monitor --> History[Allow-listed local history store]
+    History --> LocalData[Local AppData JSON / JSON and CSV export]
     Monitor --> Health[Local deterministic health evaluation]
     Monitor -- new or changed degradation only --> Workflow[diagnose workflow]
     Desktop -- manual diagnosis --> Workflow
@@ -32,6 +34,8 @@ flowchart TB
     Transport -- raw results --> Adapter
     Adapter -- sanitized peer/network health plus read-only chain data --> CoreNode
 
+    GUI --> History
+    GUI --> Tray[Windows system tray while monitoring]
     GUI --> CredMgr[Windows Credential Manager]
     Bedrock -. existing AWS profile/session .-> AWS[AWS credential chain]
 
@@ -53,7 +57,9 @@ read-only node methods used by diagnosis and produces a normalized snapshot:
 
 Fingerprints describe the condition rather than absolute block height, so routine
 chain advancement does not consume AI usage. Cycle and diagnosis locks prevent
-overlap. History and deduplication are bounded, in-memory, and reset on restart.
+overlap. Recent GUI history remains bounded in memory. A separate allow-listed
+history projection persists the newest 1000 safe events under non-roaming Local
+AppData and survives restart; it never stores raw observations or provider output.
 
 ## Privacy boundary
 
@@ -65,7 +71,17 @@ unknown peer fields are discarded at this boundary.
 
 Providers receive the adapter, never the transport. Monitoring uses the same
 adapter. Diagnostic evidence recording wraps the sanitized interface, so it does
-not create a second raw-data path.
+not create a second raw-data path. Persistent history consumes typed, controlled
+monitoring events rather than transport/provider payloads, so it does not create a
+second weaker sanitization path. JSON and CSV exports use only that persisted schema.
+
+## Desktop and tray lifecycle
+
+Tk owns the only root window and main UI loop. The tray adapter owns one icon and
+marshals every menu action back onto the Tk thread. Closing while monitoring is
+active hides the existing window; closing while idle exits. Restore never creates
+a second window or monitor. Explicit tray Quit stops the current monitor, removes
+the icon, and destroys the root.
 
 ## Capability boundary
 

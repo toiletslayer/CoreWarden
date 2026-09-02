@@ -9,6 +9,7 @@ import tkinter as tk
 from collections.abc import Callable, Mapping
 from contextlib import suppress
 from dataclasses import dataclass
+from datetime import datetime, tzinfo
 from pathlib import Path
 from tkinter import filedialog, messagebox, ttk
 from tkinter.scrolledtext import ScrolledText
@@ -23,12 +24,18 @@ from corewarden.desktop import (
 )
 from corewarden.diagnostics import SecretRedactor
 from corewarden.errors import CoreWardenError
+from corewarden.history import (
+    HISTORY_RETENTION_LIMIT,
+    SanitizedHistoryEvent,
+    local_timestamp_values,
+)
 from corewarden.monitoring import (
     DEFAULT_MONITORING_INTERVAL_SECONDS,
     SUPPORTED_MONITORING_INTERVAL_MINUTES,
     MonitoringService,
     MonitoringStatus,
 )
+from corewarden.tray import TrayController
 
 FIRST_RUN_GUIDANCE = (
     "Start here: Choose a provider and enter its settings  →  Test Provider  →  "
@@ -120,6 +127,29 @@ def format_monitoring_time(value: Any) -> str:
     return value.astimezone().strftime("%H:%M:%S")
 
 
+def history_export_filename(extension: str, value: datetime | None = None) -> str:
+    timestamp = (value or datetime.now()).strftime("%Y%m%d-%H%M%S")
+    return f"corewarden-history-{timestamp}.{extension}"
+
+
+def history_row(
+    event: SanitizedHistoryEvent, local_timezone: tzinfo | None = None
+) -> tuple[str, ...]:
+    result = event.classification or ""
+    if event.confidence is not None:
+        result = f"{result} ({event.confidence:.0%})".strip()
+    local_timestamp, _timezone_label = local_timestamp_values(event.timestamp, local_timezone)
+    return (
+        local_timestamp.replace("T", " ", 1),
+        event.event_type.replace("_", " ").title(),
+        (event.state or "").title(),
+        event.reason,
+        "Yes" if event.investigation_occurred else "No",
+        event.provider or "",
+        result,
+    )
+
+
 def _asset_path(name: str) -> Path:
     frozen_root = getattr(sys, "_MEIPASS", None)
     if frozen_root:
@@ -130,12 +160,21 @@ def _asset_path(name: str) -> Path:
 class CoreWardenDesktop:
     """Small tkinter view over the testable DesktopService."""
 
-    def __init__(self, root: tk.Tk, service: DesktopService | None = None) -> None:
+    def __init__(
+        self,
+        root: tk.Tk,
+        service: DesktopService | None = None,
+        tray_factory: Callable[..., TrayController] = TrayController,
+    ) -> None:
         self.root = root
         self.service = service or DesktopService(WindowsCredentialStore())
         self._busy_widgets: list[ttk.Button] = []
         self._brand_image: tk.PhotoImage | None = None
         self._monitor: MonitoringService | None = None
+        self._tray: TrayController | None = None
+        self._tray_factory = tray_factory
+        self._history_window: tk.Toplevel | None = None
+        self._quitting = False
 
         root.title("CoreWarden — Read-only Node Health")
         root.minsize(760, 800)
@@ -194,6 +233,9 @@ class CoreWardenDesktop:
             text="Read-only health investigation for Core-compatible nodes",
         ).pack(anchor=tk.W)
         ttk.Button(header, text="Privacy", command=self._show_privacy).pack(side=tk.RIGHT)
+        ttk.Button(header, text="History", command=self._show_history).pack(
+            side=tk.RIGHT, padx=(0, 6)
+        )
 
         ttk.Label(
             outer,
@@ -373,6 +415,105 @@ class CoreWardenDesktop:
     def _show_privacy(self) -> None:
         messagebox.showinfo("CoreWarden privacy", PRIVACY_NOTICE)
 
+    def _show_history(self) -> None:
+        if self._history_window is not None and self._history_window.winfo_exists():
+            self._history_window.deiconify()
+            self._history_window.lift()
+            self._history_window.focus_force()
+            return
+        window = tk.Toplevel(self.root)
+        self._history_window = window
+        window.title("CoreWarden — Sanitized Local History")
+        window.geometry("1000x520")
+        window.minsize(820, 400)
+        window.transient(self.root)
+        frame = ttk.Frame(window, padding=12)
+        frame.pack(fill=tk.BOTH, expand=True)
+        ttk.Label(
+            frame,
+            text=(
+                f"Sanitized local monitoring history — newest {HISTORY_RETENTION_LIMIT} "
+                "events retained"
+            ),
+            font=("Segoe UI", 11, "bold"),
+        ).pack(anchor=tk.W)
+        warning = self.service.history_warning()
+        if warning:
+            ttk.Label(frame, text=warning, foreground="#8a4b00").pack(anchor=tk.W, pady=(4, 0))
+        columns = ("time", "event", "state", "reason", "ai", "provider", "result")
+        tree = ttk.Treeview(frame, columns=columns, show="headings", height=16)
+        headings = {
+            "time": "Local date / time",
+            "event": "Event",
+            "state": "State",
+            "reason": "Reason",
+            "ai": "AI",
+            "provider": "Provider",
+            "result": "Result",
+        }
+        widths = {
+            "time": 190,
+            "event": 150,
+            "state": 85,
+            "reason": 300,
+            "ai": 45,
+            "provider": 175,
+            "result": 130,
+        }
+        for column in columns:
+            tree.heading(column, text=headings[column])
+            tree.column(column, width=widths[column], minwidth=45, stretch=column == "reason")
+        scrollbar = ttk.Scrollbar(frame, orient=tk.VERTICAL, command=tree.yview)
+        tree.configure(yscrollcommand=scrollbar.set)
+        tree.pack(side=tk.LEFT, fill=tk.BOTH, expand=True, pady=(10, 0))
+        scrollbar.pack(side=tk.LEFT, fill=tk.Y, pady=(10, 0))
+        for event in reversed(self.service.history_events()):
+            tree.insert("", tk.END, values=history_row(event))
+        actions = ttk.Frame(window, padding=(12, 0, 12, 12))
+        actions.pack(fill=tk.X)
+        ttk.Button(actions, text="Export JSON…", command=self._export_history_json).pack(
+            side=tk.LEFT
+        )
+        ttk.Button(actions, text="Export CSV…", command=self._export_history_csv).pack(
+            side=tk.LEFT, padx=(6, 0)
+        )
+        ttk.Button(actions, text="Close", command=window.destroy).pack(side=tk.RIGHT)
+        window.protocol("WM_DELETE_WINDOW", window.destroy)
+
+    def _export_history_json(self) -> None:
+        self._export_history("json")
+
+    def _export_history_csv(self) -> None:
+        self._export_history("csv")
+
+    def _export_history(self, extension: str) -> None:
+        destination = filedialog.asksaveasfilename(
+            parent=self.root,
+            title=f"Export sanitized history as {extension.upper()}",
+            defaultextension=f".{extension}",
+            initialfile=history_export_filename(extension),
+            filetypes=[(f"{extension.upper()} files", f"*.{extension}")],
+        )
+        if not destination:
+            return
+        try:
+            if extension == "json":
+                self.service.export_history_json(Path(destination))
+            else:
+                self.service.export_history_csv(Path(destination))
+        except OSError:
+            messagebox.showerror(
+                "History export failed",
+                "CoreWarden could not save the sanitized history export.",
+                parent=self.root,
+            )
+            return
+        messagebox.showinfo(
+            "History exported",
+            "Sanitized local monitoring history was exported successfully.",
+            parent=self.root,
+        )
+
     def _refresh_credential_status(self) -> None:
         self.openai_status.set(credential_status_text(self.service.credential_status()))
 
@@ -449,6 +590,8 @@ class CoreWardenDesktop:
     def _stop_monitoring(self) -> None:
         if self._monitor is not None:
             self._monitor.stop(wait=False)
+        if self._tray is not None:
+            self._tray.refresh()
 
     def _show_monitoring_status(self, status: MonitoringStatus) -> None:
         self.monitor_state.set(f"Monitoring: {format_monitoring_state(status)}")
@@ -467,11 +610,77 @@ class CoreWardenDesktop:
         self.monitor_history.delete("1.0", tk.END)
         self.monitor_history.insert(tk.END, "\n".join(lines) or "No monitoring events yet.")
         self.monitor_history.configure(state=tk.DISABLED)
+        if self._tray is not None:
+            self._tray.refresh()
 
     def _close(self) -> None:
+        if self._monitoring_active():
+            self._hide_to_tray()
+            return
+        self._quit()
+
+    def _monitoring_active(self) -> bool:
+        return self._monitor is not None and self._monitor.status.active
+
+    def _marshal(self, callback: Callable[[], None]) -> None:
+        with suppress(tk.TclError):
+            self.root.after(0, callback)
+
+    def _ensure_tray(self) -> bool:
+        if self._tray is None:
+            self._tray = self._tray_factory(
+                _asset_path("Sprite128.png"),
+                on_open=lambda: self._marshal(self._restore_from_tray),
+                on_toggle_monitoring=lambda: self._marshal(self._toggle_monitoring_from_tray),
+                on_quit=lambda: self._marshal(self._quit),
+                monitoring_active=self._monitoring_active,
+            )
+        try:
+            self._tray.start()
+        except Exception:
+            self._show_text(
+                "Error: CoreWarden could not start the system tray. Monitoring remains visible."
+            )
+            return False
+        return True
+
+    def _hide_to_tray(self) -> None:
+        if not self._ensure_tray():
+            return
+        preferences = self.service.preferences
+        if preferences is not None and not preferences.tray_notice_shown():
+            messagebox.showinfo(
+                "CoreWarden is still monitoring",
+                "CoreWarden is still monitoring in the system tray. "
+                "Use Quit CoreWarden from the tray menu to stop and exit.",
+                parent=self.root,
+            )
+            preferences.mark_tray_notice_shown()
+        self.root.withdraw()
+
+    def _restore_from_tray(self) -> None:
+        self.root.deiconify()
+        self.root.lift()
+        self.root.focus_force()
+
+    def _toggle_monitoring_from_tray(self) -> None:
+        if self._monitoring_active():
+            self._stop_monitoring()
+        else:
+            self._start_monitoring()
+        if self._tray is not None:
+            self._tray.refresh()
+
+    def _quit(self) -> None:
+        if self._quitting:
+            return
+        self._quitting = True
         if self._monitor is not None:
-            self._monitor.stop(wait=False)
-        self.root.destroy()
+            self._monitor.stop(wait=True)
+        if self._tray is not None:
+            self._tray.stop()
+        with suppress(tk.TclError):
+            self.root.destroy()
 
     def _run_async(
         self,
