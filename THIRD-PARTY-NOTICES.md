@@ -10,7 +10,7 @@ licenses:
 | Strands Agents | Bedrock agent and tool runtime | Apache-2.0 |
 | boto3 / botocore | AWS credential and Bedrock runtime integration through Strands | Apache-2.0 |
 | AWS Common Runtime for Python (awscrt) | AWS `login_session` credential support | Apache-2.0 |
-| Pillow | approved tray-icon image loading | HPND |
+| Pillow | approved tray-icon image loading | MIT-CMU |
 | pystray | Windows system-tray integration | LGPL-3.0-or-later |
 
 The Windows bundle is created with PyInstaller, which is GPL-2.0-or-later with

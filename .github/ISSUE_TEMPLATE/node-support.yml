@@ -1,0 +1,58 @@
+name: Node support
+description: Propose support for another Bitcoin Core-compatible node.
+title: "[Node support]: "
+body:
+  - type: markdown
+    attributes:
+      value: "Share public technical information only. Never paste credentials, keys, seed phrases, cookies, or private logs."
+  - type: input
+    id: project
+    attributes:
+      label: Project or coin name
+    validations:
+      required: true
+  - type: input
+    id: upstream
+    attributes:
+      label: Upstream Core repository URL
+    validations:
+      required: true
+  - type: input
+    id: rpc_docs
+    attributes:
+      label: RPC documentation URL (if available)
+  - type: input
+    id: port
+    attributes:
+      label: Default RPC port
+      description: Specify network (mainnet, testnet, regtest), or say unknown.
+    validations:
+      required: true
+  - type: input
+    id: executables
+    attributes:
+      label: Daemon, GUI, and CLI names
+    validations:
+      required: true
+  - type: textarea
+    id: differences
+    attributes:
+      label: Known differences from Bitcoin Core RPC
+      description: Include supported version and differences in getblockchaininfo, getnetworkinfo, getpeerinfo, or getchaintips. Say unknown if not yet investigated.
+    validations:
+      required: true
+  - type: dropdown
+    id: implementation
+    attributes:
+      label: Do you intend to implement support?
+      options:
+        - "Yes"
+        - "I can help test"
+        - "No, this is a request"
+    validations:
+      required: true
+  - type: textarea
+    id: testing
+    attributes:
+      label: Test or regtest information
+      description: How can contributors reproduce compatibility safely? Include public setup instructions or sanitized fixture plans, without credentials.

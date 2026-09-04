@@ -1,5 +1,9 @@
 # CoreWarden submission assets
 
+Historical submission presentation material. See the
+[hackathon index](../docs/hackathon/README.md) for context and permanent project docs.
+Screenshots describe their capture checkpoint; consult the root README for current behavior.
+
 These files are presentation assets for the AWS Agents for Humans Devpost entry, the public GitHub README, and demo-video overlays. They do not change CoreWarden runtime behavior.
 
 | File | Dimensions | What it demonstrates | Data source | Live provider call for capture | Recommended use |

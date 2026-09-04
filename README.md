@@ -1,18 +1,19 @@
 # CoreWarden
 
-CoreWarden quietly supervises a Bitcoin/Core-compatible node, evaluates health
-changes locally, and invokes an AI investigator only when deeper reasoning is
-warranted. It is read-only: it can observe four fixed RPC methods, but it cannot
-repair the node, access wallets, send transactions, or change node state.
+CoreWarden is a local-first, read-only monitor and AI-assisted diagnostic tool
+for Bitcoin Core-compatible cryptocurrency nodes. It collects structured node
+evidence, evaluates health changes locally, and invokes AI when deeper reasoning
+is warranted. Bitcoin II is the initial/reference implementation and validated
+node target; other compatible nodes need their own compatibility validation.
 
-The primary agent path uses Strands Agents with Amazon Bedrock. OpenAI's
-Responses API is also supported through the same provider-neutral diagnostic
-boundary. Provider selection is explicit—there is no automatic fallback.
+The provider-neutral diagnostic boundary supports OpenAI's Responses API and
+Strands Agents with Amazon Bedrock. Provider selection is explicit, with no
+automatic fallback. A Windows desktop application and package provide diagnosis,
+optional monitoring, and sanitized local history.
 
-CoreWarden is designed for the AWS Agents for Humans hackathon story:
-
-> Detect meaningful node-health changes deterministically, investigate only when
-> needed, and surface concise evidence for human judgment.
+Node/RPC evidence is authoritative; AI interprets that evidence rather than
+controlling the node. CoreWarden observes four fixed RPC methods and cannot repair
+the node, access wallets, send transactions, or change node state.
 
 Privacy-sensitive peer and endpoint fields are removed by the local RPC adapter
 before monitoring policy, Strands, Bedrock, OpenAI, logs, or evidence recording
@@ -41,7 +42,7 @@ and RPC unavailability does not create a provider retry storm.
   unavailable.
 - Cost-free synthetic acceptance covering degradation, deduplication, changed
   degradation, recovery, unavailability, and provider-visible privacy.
-- 123 passing tests and 91% coverage at the current checkpoint.
+- 123 passing tests and 91% coverage at the recorded resilience checkpoint.
 
 The committed [live evidence artifact](corewarden-evidence-live-healthy-success.json)
 contains the four sanitized observations and validated diagnosis. Its privacy
@@ -83,9 +84,9 @@ credential boundaries.
 `CoreNode` is the chain-neutral diagnostic interface. `CoreRpcNodeAdapter` is
 the first adapter and depends only on the conventional Bitcoin Core-style RPC
 surface, not on a chain name, ticker, port, genesis block, expected block time,
-or hard-coded height. A Bitcoin II node can therefore be an initial test target,
-while other Bitcoin-derived Core nodes should work without changes when they
-implement the same four RPC methods.
+or hard-coded height. Bitcoin II is the current reference target. Other
+Bitcoin-derived nodes may be compatible when they implement the same four RPC
+methods and response semantics, but are not yet validated integrations.
 
 The adapter name describes the RPC family, not a dependency on the Bitcoin
 mainnet. A future incompatible Core-derived RPC surface can implement `CoreNode`
@@ -185,7 +186,7 @@ python -m pip install -e ".[dev,package]"
 The CLI reads configuration from environment variables only. It does not parse
 `.env` files itself, which avoids adding a second secret-loading mechanism.
 `.env.example` is a copyable reference and `.env` is git-ignored. The desktop
-app accepts settings in memory and persists only the OpenAI key, through Windows
+app accepts settings in memory and persists the OpenAI key through Windows
 Credential Manager rather than a plaintext file.
 
 | Variable | Required | Default | Meaning |
@@ -230,8 +231,11 @@ export AWS_REGION="us-west-2"
 export OPENAI_API_KEY="your-project-key-here"
 ```
 
-Ports are deliberately not defaulted because derived chains commonly use
-different RPC ports.
+The CLI requires an explicit RPC URL and has no default port. The Windows
+desktop pre-fills `http://127.0.0.1:8337` for the Bitcoin II reference target,
+unless `COREWARDEN_RPC_URL` overrides it. The examples above use that same target.
+For another node or network, enter its actual RPC endpoint before testing or
+monitoring; the application does not detect the chain or select its port.
 
 ## Run
 
@@ -257,7 +261,7 @@ fails before any node tool runs or evidence file is created.
 
 ## Windows desktop app
 
-### Judge quickstart
+### Desktop quickstart
 
 1. Extract the entire `CoreWarden` folder from `CoreWarden-Windows-x64.zip`.
 2. Launch `CoreWarden.exe`. The unsigned build may require confirmation through
@@ -275,7 +279,8 @@ CoreWarden calls only `getblockchaininfo`, `getnetworkinfo`, `getpeerinfo`, and
 `getchaintips`. Peer-identifying and endpoint data is filtered locally before
 model access. The app stores OpenAI keys in Windows Credential Manager and does
 not intentionally persist raw RPC credentials or peer-identifying observations.
-The release ZIP also includes `JUDGE-QUICKSTART.txt` with these steps.
+The release ZIP also includes [JUDGE-QUICKSTART.txt](JUDGE-QUICKSTART.txt), retained
+under its historical filename, with these steps.
 
 ### Development launch
 
@@ -502,9 +507,23 @@ and a fake provider; no paid API or real node is contacted.
 Remediation, restarts, wallet functionality, general-purpose dashboards, cloud deployment, fleet
 management, transaction sending, chain-specific policy thresholds, and arbitrary RPC remain out of
 scope.
-Hosted/shared inference, provider auto-routing, credential GUIs or storage,
-Ollama, direct Anthropic integration, and automatic fallback also remain out of
-scope.
+Hosted/shared inference, provider auto-routing, additional credential storage
+beyond the existing Windows OpenAI-key support, Ollama, direct Anthropic
+integration, and automatic fallback also remain out of scope.
+
+Follow-up: explicit node/network selection and chain-specific desktop defaults
+need a separate design and compatibility validation. The current Bitcoin II
+prefill is not a chain-neutral discovery mechanism.
+
+## Contributing and project history
+
+See [CONTRIBUTING.md](CONTRIBUTING.md) for development setup, tests, security
+expectations, and proposing support for another Core-compatible node.
+
+CoreWarden originated in the AWS Agents for Humans hackathon context. The
+[hackathon documentation index](docs/hackathon/README.md) distinguishes preserved
+submission assets and recording plans from ongoing project documentation and
+useful technical validation records.
 
 ## Development references
 
