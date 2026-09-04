@@ -1,23 +1,45 @@
 # CoreWarden
 
-CoreWarden is a local-first, read-only monitor and AI-assisted diagnostic tool
-for Bitcoin Core-compatible cryptocurrency nodes. It collects structured node
-evidence, evaluates health changes locally, and invokes AI when deeper reasoning
-is warranted. Bitcoin II is the initial/reference implementation and validated
-node target; other compatible nodes need their own compatibility validation.
+[![CI](https://github.com/toiletslayer/CoreWarden/actions/workflows/ci.yml/badge.svg)](https://github.com/toiletslayer/CoreWarden/actions/workflows/ci.yml)
+[![License: Apache-2.0](https://img.shields.io/badge/License-Apache--2.0-blue.svg)](LICENSE)
+[![Python 3.10+](https://img.shields.io/badge/Python-3.10%2B-blue.svg)](pyproject.toml)
 
-The provider-neutral diagnostic boundary supports OpenAI's Responses API and
-Strands Agents with Amazon Bedrock. Provider selection is explicit, with no
-automatic fallback. A Windows desktop application and package provide diagnosis,
-optional monitoring, and sanitized local history.
+**CoreWarden is a Windows-first, local-first, read-only monitor and AI-assisted diagnostic tool for Bitcoin Core-compatible cryptocurrency nodes.**
 
-Node/RPC evidence is authoritative; AI interprets that evidence rather than
-controlling the node. CoreWarden observes four fixed RPC methods and cannot repair
-the node, access wallets, send transactions, or change node state.
+CoreWarden v1 was created by [`toiletslayer`](https://github.com/toiletslayer) and originally developed and live-validated against **Bitcoin II**. Bitcoin II remains the reference target, but the project is intended to grow beyond one chain through compatibility validation and small node adapters where needed.
 
-Privacy-sensitive peer and endpoint fields are removed by the local RPC adapter
-before monitoring policy, Strands, Bedrock, OpenAI, logs, or evidence recording
-can receive the observations.
+Run a Core-based cryptocurrency on Windows? **Help validate it, add compatibility, or suggest what CoreWarden should diagnose next.** See [CONTRIBUTING.md](CONTRIBUTING.md) and the [project roadmap](docs/ROADMAP.md).
+
+## Validated and candidate nodes
+
+| Project | Status | Notes |
+| --- | --- | --- |
+| Bitcoin II | ✅ Validated reference target | Original live-tested implementation; desktop currently pre-fills RPC port `8337`. |
+| Kvanta5 | 🧪 Candidate | Community compatibility validation / adapter work wanted. |
+| CapStash | 🧪 Candidate | Community compatibility validation / adapter work wanted. |
+| Litecoin | 🧪 Candidate | Community compatibility validation / adapter work wanted. |
+| Other Core-derived nodes | 🤝 Contributions welcome | Compatibility must be demonstrated rather than assumed. |
+
+Candidate entries above are **not claims of current support**. A node should become a validated target only after its diagnostic RPC responses and relevant edge cases are tested against CoreWarden.
+
+## Who might find CoreWarden useful?
+
+- people running cryptocurrency Core nodes on Windows
+- small coin communities without dedicated node-diagnostic tooling
+- developers investigating synchronization, peer, network, or chain-tip problems
+- operators who want a human-readable explanation of node health without giving AI control of the node
+- maintainers who want to validate or add support for their own Core-derived network
+- contributors with another idea for using the sanitized, read-only node-evidence layer
+
+**Have another use case or idea? Open an issue. CoreWarden is intentionally early enough to shape.**
+
+## How it works
+
+CoreWarden collects structured node evidence, evaluates health changes locally, and invokes AI only when deeper reasoning is warranted. The provider-neutral diagnostic boundary supports OpenAI's Responses API and Strands Agents with Amazon Bedrock. Provider selection is explicit, with no automatic fallback. A Windows desktop application and package provide diagnosis, optional monitoring, and sanitized local history.
+
+Node/RPC evidence is authoritative; AI interprets that evidence rather than controlling the node. CoreWarden observes four fixed RPC methods and cannot repair the node, access wallets, send transactions, or change node state.
+
+Privacy-sensitive peer and endpoint fields are removed by the local RPC adapter before monitoring policy, Strands, Bedrock, OpenAI, logs, or evidence recording can receive the observations.
 
 ## What it reports
 
@@ -42,7 +64,7 @@ and RPC unavailability does not create a provider retry storm.
   unavailable.
 - Cost-free synthetic acceptance covering degradation, deduplication, changed
   degradation, recovery, unavailability, and provider-visible privacy.
-- 123 passing tests and 91% coverage at the recorded resilience checkpoint.
+- **149 passing tests** in the current public-readiness checkpoint; hosted GitHub Actions CI is green.
 
 The committed [live evidence artifact](corewarden-evidence-live-healthy-success.json)
 contains the four sanitized observations and validated diagnosis. Its privacy
@@ -141,7 +163,8 @@ are excluded.
 
 ## Requirements
 
-- Python 3.10 or newer
+- Windows is the supported desktop/package target
+- Python 3.10 or newer for source/development use
 - one reachable Bitcoin Core-compatible JSON-RPC endpoint
 - HTTP Basic Auth credentials if the endpoint requires them
 - for Bedrock: AWS credentials through boto3's normal chain and model access
@@ -389,7 +412,7 @@ rebuilding; Windows keeps bundled DLLs locked while that app is running.
 The script rebuilds the approved multi-resolution icon, cleans prior build,
 distribution, and release directories, installs the `package` optional
 dependency, runs the checked-in PyInstaller specification, and creates the
-judge-ready ZIP. Its outputs are:
+release ZIP. Its outputs are:
 
 ```text
 dist\CoreWarden\CoreWarden.exe
@@ -397,9 +420,8 @@ release\CoreWarden-Windows-x64.zip
 ```
 
 Distribute the ZIP. It contains the complete `CoreWarden` onedir bundle, the
-short judge quickstart, the Apache-2.0 project license, and direct-dependency
-notices. The judge does not need a separate Python
-installation, but still needs a reachable local node and either their own OpenAI
+short judge quickstart retained from the original hackathon build, the Apache-2.0 project license, and direct-dependency
+notices. The user does not need a separate Python installation, but still needs a reachable local node and either their own OpenAI
 project key or an authenticated AWS profile/session. A one-folder build is used
 instead of a one-file archive for predictable startup and dependency inspection.
 
@@ -518,7 +540,8 @@ prefill is not a chain-neutral discovery mechanism.
 ## Contributing and project history
 
 See [CONTRIBUTING.md](CONTRIBUTING.md) for development setup, tests, security
-expectations, and proposing support for another Core-compatible node.
+expectations, and proposing support for another Core-compatible node. See
+[docs/ROADMAP.md](docs/ROADMAP.md) for candidate validation targets and useful next contributions, and [CODE_OF_CONDUCT.md](CODE_OF_CONDUCT.md) for community expectations.
 
 CoreWarden originated in the AWS Agents for Humans hackathon context. The
 [hackathon documentation index](docs/hackathon/README.md) distinguishes preserved
