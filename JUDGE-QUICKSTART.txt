@@ -7,24 +7,41 @@ Originally prepared for hackathon judges; retained as the packaged quickstart.
 2. Launch CoreWarden.exe. Because this build is unsigned, Windows SmartScreen may ask
    you to confirm that you trust it.
 3. Choose OpenAI or Bedrock.
-   - OpenAI: paste your project API key and select Save securely. CoreWarden stores it
-     in your Windows Credential Manager and clears the entry field.
-   - Bedrock: authenticate an AWS profile/session with Bedrock access, then enter its
-     profile and region. CoreWarden does not store AWS secrets.
+   - OpenAI: use your own project API key. Paste it and select Save securely, or use
+     an existing OPENAI_API_KEY environment variable. Saved keys go to the current
+     Windows user's Credential Manager and the entry field is cleared. The release
+     ZIP does NOT contain a shared or maintainer-owned OpenAI key.
+   - Bedrock: authenticate your own AWS profile/session with Bedrock access, then
+     enter its profile and region. CoreWarden does not store AWS secrets.
 4. Enter the URL and authentication for a running local Core-compatible node. Use
    either RPC username/password or its cookie file; CoreWarden does not save them.
    The default http://127.0.0.1:8337 is for Bitcoin II. Change it for another node
    or network; CoreWarden does not detect the chain or choose its port.
 5. Select Test Provider, then Test Node, then Run Diagnosis.
+   - Test Provider (OpenAI) makes one small, tool-free gpt-5.6-luna API request with
+     response storage disabled. It does not contact your node.
+   - Test Node makes one allowed read-only node RPC call and does not invoke AI.
+   - Run Diagnosis collects the four fixed read-only observations, filters them
+     locally, and sends only sanitized diagnostic evidence to the selected provider.
 6. Read the classification, confidence, evidence, and safety boundary in the result.
 7. Optional: choose an interval (5 minutes by default) and select Start Monitoring.
-   Deterministic local checks run on each cycle. AI runs only for a new or materially
-   changed degraded condition; unchanged conditions are deduplicated.
+   Deterministic local checks run on each cycle. Healthy steady state, RPC
+   unavailability, recovery, and unchanged repeated degradation do not invoke AI.
+   AI runs only for a new or materially changed degraded condition; unchanged
+   conditions are deduplicated for the monitoring session.
 
 Privacy: CoreWarden calls only getblockchaininfo, getnetworkinfo, getpeerinfo, and
 getchaintips. Peer-identifying and endpoint data is filtered locally before model
-access. Raw RPC credentials and peer-identifying observations are not intentionally
-persisted.
+access. RPC usernames/passwords, cookie contents, wallet/private-key material, and
+provider credentials are not sent to the model by CoreWarden and are not
+intentionally persisted in monitoring history or diagnostic evidence.
+
+Provider selection is explicit; CoreWarden does not automatically fall back between
+OpenAI and Bedrock. Other users must provide their own OpenAI or AWS/Bedrock access.
+Any provider usage is billed, if applicable, to the user's own provider account.
+
 Monitoring is read-only and off by default. Sanitized monitoring history is stored
 locally (up to 1000 events); the recent-event panel shows up to 20 entries. While
 monitoring, closing the window hides it to the tray; use Quit CoreWarden to exit.
+
+More detail: docs/AI-USAGE-CREDENTIALS-PRIVACY.md
