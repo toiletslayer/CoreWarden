@@ -17,6 +17,8 @@ Originally prepared for hackathon judges; retained as the packaged quickstart.
    either RPC username/password or its cookie file; CoreWarden does not save them.
    The default http://127.0.0.1:8337 is for Bitcoin II. Change it for another node
    or network; CoreWarden does not detect the chain or choose its port.
+   Bitcoin II Windows users who need help creating or locating RPC authentication
+   can follow docs/BITCOIN-II-RPC-SETUP.md in the repository.
 5. Select Test Provider, then Test Node, then Run Diagnosis.
    - Test Provider (OpenAI) makes one small, tool-free gpt-5.6-luna API request with
      response storage disabled. It does not contact your node.
