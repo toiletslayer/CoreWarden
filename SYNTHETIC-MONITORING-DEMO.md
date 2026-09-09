@@ -6,10 +6,10 @@ It supports only `getblockchaininfo`, `getnetworkinfo`, `getpeerinfo`, and `getc
 
 ## Cost-free automated acceptance
 
-From an installed development checkout, run:
+From an installed development checkout, run the bounded judge wrapper:
 
 ```powershell
-python scripts\synthetic_rpc_harness.py acceptance
+.\scripts\judge_acceptance.ps1
 ```
 
 The command starts an ephemeral loopback server, sends observations through CoreWarden's real HTTP
@@ -25,8 +25,10 @@ unavailable (server stopped; no investigation)
 ```
 
 The investigation implementation is a fake `DiagnosisProvider`; it invokes the same four sanitized
-node capabilities but makes no OpenAI or Bedrock request. Production monitoring intervals and GUI
-behavior are unchanged.
+node capabilities but makes no OpenAI or Bedrock request. The wrapper removes provider credentials
+from the child environment, enforces a 30-second timeout, validates the exact state sequence,
+investigation count, event semantics, and provider-visible privacy assertion, and exits nonzero on
+any mismatch. Production monitoring intervals and GUI behavior are unchanged.
 
 ## Interactive local server
 

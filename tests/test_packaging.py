@@ -18,10 +18,17 @@ def test_windows_packaging_configuration_has_expected_safety_shape() -> None:
     root = Path(__file__).parents[1]
     spec = (root / "CoreWarden.spec").read_text(encoding="utf-8")
     script = (root / "scripts" / "build_windows.ps1").read_text(encoding="utf-8")
+    smoke = (root / "scripts" / "smoke_windows_bundle.ps1").read_text(encoding="utf-8")
+    acceptance = (root / "scripts" / "judge_acceptance.ps1").read_text(encoding="utf-8")
+    workflow = (root / ".github" / "workflows" / "windows-release-build.yml").read_text(
+        encoding="utf-8"
+    )
     pyproject = (root / "pyproject.toml").read_text(encoding="utf-8")
 
     assert 'name="CoreWarden"' in spec
     assert "console=False" in spec
+    assert "windows-version-info.txt" in spec
+    assert "version=str(version_path)" in spec
     for asset in ("corewarden.ico", "Sprite32.png", "Sprite64.png", "Sprite128.png"):
         assert asset in spec
     assert "PyInstaller --noconfirm --clean CoreWarden.spec" in script
@@ -31,6 +38,27 @@ def test_windows_packaging_configuration_has_expected_safety_shape() -> None:
     assert 'foreach ($relativePath in @("build", "dist", "release"))' in script
     assert 'Assert-NativeCommand "PyInstaller build"' in script
     assert 'Assert-NativeCommand "Release ZIP build"' in script
+    assert 'if ($version.Trim() -ne "3.12.10")' in script
+    assert smoke.isascii()
+    assert '"CoreWarden "' in smoke
+    assert "[char]0x2014" in smoke
+    assert '" Read-only Node Health"' in smoke
+    assert acceptance.isascii()
+    assert "Unhandled exception|Traceback|Error" in smoke
+    assert "CloseMainWindow" in smoke
+    assert "$process.Kill()" in smoke
+    assert 'python-version: "3.12.10"' in workflow
+    assert "Smoke built bundle" in workflow
+    assert "Smoke extracted release ZIP" in workflow
+    assert "Expand-Archive" in workflow
+    expected_states = (
+        'expectedStates = @("healthy", "degraded", "degraded", "degraded", '
+        '"healthy", "unavailable")'
+    )
+    assert expected_states in acceptance
+    assert "provider_invocations" in acceptance
+    assert "privacy_clean" in acceptance
+    assert "Synthetic/fake acceptance provider" in acceptance
     assert 'corewarden-gui = "corewarden.gui:main"' in pyproject
     assert '"botocore[crt]>=1.43.63,<2"' in pyproject
     assert '"Pillow>=10,<13"' in pyproject
@@ -81,16 +109,11 @@ def test_release_zip_contains_bundle_and_public_release_documents(tmp_path: Path
     (bundle / "CoreWarden.exe").write_bytes(b"MZ-test")
     (bundle / "_internal" / "runtime.dll").write_bytes(b"runtime")
     (bundle / ".env").write_text("OPENAI_API_KEY=not-shippable", encoding="utf-8")
+    (bundle / "debug.log").write_text("not-shippable", encoding="utf-8")
     (bundle / "temporary-evidence.json").write_text("{}", encoding="utf-8")
     cache = bundle / "__pycache__"
     cache.mkdir()
     (cache / "module.pyc").write_bytes(b"cache")
-    quickstart = tmp_path / "JUDGE-QUICKSTART.txt"
-    quickstart.write_text("Launch CoreWarden.exe", encoding="utf-8")
-    license_path = tmp_path / "LICENSE"
-    license_path.write_text("Apache License 2.0", encoding="utf-8")
-    notices = tmp_path / "THIRD-PARTY-NOTICES.md"
-    notices.write_text("Third-party notices", encoding="utf-8")
     output = tmp_path / "CoreWarden-Windows-x64.zip"
 
     subprocess.run(
@@ -101,12 +124,8 @@ def test_release_zip_contains_bundle_and_public_release_documents(tmp_path: Path
             str(bundle),
             "--output",
             str(output),
-            "--quickstart",
-            str(quickstart),
-            "--license",
-            str(license_path),
-            "--notices",
-            str(notices),
+            "--project-root",
+            str(root),
         ],
         check=True,
     )
@@ -116,7 +135,13 @@ def test_release_zip_contains_bundle_and_public_release_documents(tmp_path: Path
             "CoreWarden/CoreWarden.exe",
             "CoreWarden/JUDGE-QUICKSTART.txt",
             "CoreWarden/LICENSE",
+            "CoreWarden/README.md",
+            "CoreWarden/SYNTHETIC-MONITORING-DEMO.md",
             "CoreWarden/THIRD-PARTY-NOTICES.md",
             "CoreWarden/_internal/runtime.dll",
+            "CoreWarden/docs/AI-USAGE-CREDENTIALS-PRIVACY.md",
+            "CoreWarden/docs/BITCOIN-II-RPC-SETUP.md",
+            "CoreWarden/scripts/judge_acceptance.ps1",
+            "CoreWarden/scripts/synthetic_rpc_harness.py",
         }
         assert all(info.date_time == (2020, 1, 1, 0, 0, 0) for info in archive.infolist())

@@ -10,6 +10,12 @@ function Assert-NativeCommand {
 $projectRoot = Split-Path -Parent $PSScriptRoot
 Push-Location $projectRoot
 try {
+    $version = python -c "import sys; print('.'.join(map(str, sys.version_info[:3])))"
+    Assert-NativeCommand "Python version check"
+    if ($version.Trim() -ne "3.12.10") {
+        throw "Windows release builds require the validated Python 3.12.10 toolchain; found $($version.Trim())."
+    }
+
     foreach ($relativePath in @("build", "dist", "release")) {
         $target = [IO.Path]::GetFullPath((Join-Path $projectRoot $relativePath))
         $expectedParent = [IO.Path]::GetFullPath($projectRoot) + [IO.Path]::DirectorySeparatorChar

@@ -1,49 +1,53 @@
-CoreWarden Windows quickstart
-=============================
+CoreWarden v0.2.0 judge quickstart
+=================================
 
-Originally prepared for hackathon judges; retained as the packaged quickstart.
+FIRST PATH — cost-free acceptance (source checkout)
+---------------------------------------------------
 
-1. Extract the entire CoreWarden folder from CoreWarden-Windows-x64.zip.
-2. Launch CoreWarden.exe. Because this build is unsigned, Windows SmartScreen may ask
-   you to confirm that you trust it.
+After installing the development checkout (`python -m pip install -e ".[dev]"`), run:
+
+    .\scripts\judge_acceptance.ps1
+
+This bounded command uses an ephemeral loopback JSON-RPC server, deliberately fake RPC
+credentials, and a fake DiagnosisProvider. It contacts no real node and makes no OpenAI,
+Bedrock, or other paid model request. It must report the exact healthy/degraded/deduplicated/
+changed/recovered/unavailable sequence, exactly two fake-provider investigations, and clean
+provider-visible privacy assertions. Full details: SYNTHETIC-MONITORING-DEMO.md.
+
+SECOND PATH — packaged Windows GUI
+----------------------------------
+
+1. Extract the entire CoreWarden folder from CoreWarden-Windows-x64.zip. Do not move only
+   CoreWarden.exe; its _internal directory is required.
+2. Launch CoreWarden.exe. The executable is unsigned, so Windows SmartScreen may ask you to
+   confirm that you trust it. The expected title is "CoreWarden — Read-only Node Health".
 3. Choose OpenAI or Bedrock.
-   - OpenAI: use your own project API key. Paste it and select Save securely, or use
-     an existing OPENAI_API_KEY environment variable. Saved keys go to the current
-     Windows user's Credential Manager and the entry field is cleared. The release
-     ZIP does NOT contain a shared or maintainer-owned OpenAI key.
-   - Bedrock: authenticate your own AWS profile/session with Bedrock access, then
-     enter its profile and region. CoreWarden does not store AWS secrets.
-4. Enter the URL and authentication for a running local Core-compatible node. Use
-   either RPC username/password or its cookie file; CoreWarden does not save them.
-   The default http://127.0.0.1:8337 is for Bitcoin II. Change it for another node
-   or network; CoreWarden does not detect the chain or choose its port.
-   Bitcoin II Windows users who need help creating or locating RPC authentication
-   can follow docs/BITCOIN-II-RPC-SETUP.md in the repository.
-5. Select Test Provider, then Test Node, then Run Diagnosis.
-   - Test Provider (OpenAI) makes one small, tool-free gpt-5.6-luna API request with
-     response storage disabled. It does not contact your node.
-   - Test Node makes one allowed read-only node RPC call and does not invoke AI.
-   - Run Diagnosis collects the four fixed read-only observations, filters them
-     locally, and sends only sanitized diagnostic evidence to the selected provider.
-6. Read the classification, confidence, evidence, and safety boundary in the result.
-7. Optional: choose an interval (5 minutes by default) and select Start Monitoring.
-   Deterministic local checks run on each cycle. Healthy steady state, RPC
-   unavailability, recovery, and unchanged repeated degradation do not invoke AI.
-   AI runs only for a new or materially changed degraded condition; unchanged
-   conditions are deduplicated for the monitoring session.
+   - OpenAI: provide your own project API key. Saved keys use the current Windows user's
+     Credential Manager; the ZIP contains no shared or maintainer-owned key.
+   - Bedrock: authenticate your own AWS profile/session with Bedrock access. CoreWarden does
+     not store AWS secrets.
+4. Enter a running local Core-compatible node's URL and RPC username/password or cookie file.
+   CoreWarden does not save RPC secrets. The 127.0.0.1:8337 default is for Bitcoin II; change
+   it for other nodes or networks. See docs/BITCOIN-II-RPC-SETUP.md for Bitcoin II setup.
+5. Select Test Provider, Test Node, then Run Diagnosis. Provider tests may make a small request
+   billed to your account. Test Node is model-free. Run Diagnosis sends only locally filtered
+   diagnostic evidence to the explicitly selected provider.
+6. Optional monitoring is off by default. Healthy steady state, unavailability, recovery, and
+   unchanged repeated degradation do not invoke AI. Only a new or materially changed degraded
+   condition triggers one investigation.
 
-Privacy: CoreWarden calls only getblockchaininfo, getnetworkinfo, getpeerinfo, and
-getchaintips. Peer-identifying and endpoint data is filtered locally before model
-access. RPC usernames/passwords, cookie contents, wallet/private-key material, and
-provider credentials are not sent to the model by CoreWarden and are not
-intentionally persisted in monitoring history or diagnostic evidence.
+Hard safety boundary
+--------------------
 
-Provider selection is explicit; CoreWarden does not automatically fall back between
-OpenAI and Bedrock. Other users must provide their own OpenAI or AWS/Bedrock access.
-Any provider usage is billed, if applicable, to the user's own provider account.
+CoreWarden exposes exactly getblockchaininfo, getnetworkinfo, getpeerinfo, and getchaintips,
+all with empty parameters. It has no arbitrary RPC, wallet, transaction, restart, remediation,
+shell, or filesystem tool. Peer-identifying and endpoint data is removed locally before model
+access. RPC credentials, cookies, provider credentials, and wallet/private-key material are not
+sent to the model by CoreWarden. Provider selection is explicit and never falls back silently.
 
-Monitoring is read-only and off by default. Sanitized monitoring history is stored
-locally (up to 1000 events); the recent-event panel shows up to 20 entries. While
-monitoring, closing the window hides it to the tray; use Quit CoreWarden to exit.
+Release contents and further reading
+------------------------------------
 
-More detail: docs/AI-USAGE-CREDENTIALS-PRIVACY.md
+This ZIP includes README.md, SYNTHETIC-MONITORING-DEMO.md,
+docs/AI-USAGE-CREDENTIALS-PRIVACY.md, docs/BITCOIN-II-RPC-SETUP.md, LICENSE,
+THIRD-PARTY-NOTICES.md, and the acceptance scripts referenced above.
