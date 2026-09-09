@@ -1,4 +1,4 @@
-"""Create a minimal deterministic ZIP from the PyInstaller onedir bundle."""
+"""Create a deterministic judge-ready ZIP from the PyInstaller onedir bundle."""
 
 from __future__ import annotations
 
@@ -11,7 +11,7 @@ ARCHIVE_ROOT = PurePosixPath("CoreWarden")
 ZIP_TIMESTAMP = (2020, 1, 1, 0, 0, 0)
 EXCLUDED_DIRECTORIES = {"__pycache__", ".pytest_cache", ".ruff_cache", "htmlcov"}
 EXCLUDED_NAMES = {".coverage", ".env"}
-EXCLUDED_SUFFIXES = {".pyc", ".pyo", ".pem", ".key"}
+EXCLUDED_SUFFIXES = {".pyc", ".pyo", ".pem", ".key", ".log"}
 
 
 def _excluded(relative: Path) -> bool:
@@ -36,16 +36,27 @@ def _write_entry(archive: zipfile.ZipFile, name: PurePosixPath, data: bytes) -> 
 def build_release(
     bundle: Path,
     output: Path,
-    quickstart: Path,
-    license_path: Path,
-    notices_path: Path,
+    project_root: Path,
 ) -> None:
-    """Package the runnable bundle plus public redistribution documents."""
+    """Package the runnable bundle plus judge and redistribution materials."""
     executable = bundle / "CoreWarden.exe"
     if not executable.is_file():
         raise FileNotFoundError(f"Expected packaged executable was not found: {executable}")
-    documents = (quickstart, license_path, notices_path)
-    missing_documents = [str(path) for path in documents if not path.is_file()]
+    release_files = (
+        "JUDGE-QUICKSTART.txt",
+        "README.md",
+        "SYNTHETIC-MONITORING-DEMO.md",
+        "docs/AI-USAGE-CREDENTIALS-PRIVACY.md",
+        "docs/BITCOIN-II-RPC-SETUP.md",
+        "scripts/judge_acceptance.ps1",
+        "scripts/synthetic_rpc_harness.py",
+        "LICENSE",
+        "THIRD-PARTY-NOTICES.md",
+    )
+    documents = tuple(
+        (project_root / relative, PurePosixPath(relative)) for relative in release_files
+    )
+    missing_documents = [str(path) for path, _ in documents if not path.is_file()]
     if missing_documents:
         raise FileNotFoundError(
             "Required release document was not found: " + ", ".join(missing_documents)
@@ -62,8 +73,8 @@ def build_release(
             _write_entry(
                 archive, ARCHIVE_ROOT / PurePosixPath(relative.as_posix()), path.read_bytes()
             )
-        for document in documents:
-            _write_entry(archive, ARCHIVE_ROOT / document.name, document.read_bytes())
+        for document, relative in documents:
+            _write_entry(archive, ARCHIVE_ROOT / relative, document.read_bytes())
 
 
 def main() -> None:
@@ -71,23 +82,12 @@ def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--bundle", type=Path, default=project_root / "dist" / "CoreWarden")
     parser.add_argument("--output", type=Path, default=project_root / "release" / RELEASE_NAME)
-    parser.add_argument("--quickstart", type=Path, default=project_root / "JUDGE-QUICKSTART.txt")
-    parser.add_argument(
-        "--license", dest="license_path", type=Path, default=project_root / "LICENSE"
-    )
-    parser.add_argument(
-        "--notices",
-        dest="notices_path",
-        type=Path,
-        default=project_root / "THIRD-PARTY-NOTICES.md",
-    )
+    parser.add_argument("--project-root", type=Path, default=project_root)
     args = parser.parse_args()
     build_release(
         args.bundle,
         args.output,
-        args.quickstart,
-        args.license_path,
-        args.notices_path,
+        args.project_root,
     )
 
 

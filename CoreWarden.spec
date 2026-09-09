@@ -4,13 +4,14 @@ from pathlib import Path
 
 project_root = Path(SPECPATH)
 icon_path = project_root / "assets" / "corewarden.ico"
+version_path = project_root / "assets" / "windows-version-info.txt"
 asset_paths = [
     icon_path,
     project_root / "assets" / "Sprite32.png",
     project_root / "assets" / "Sprite64.png",
     project_root / "assets" / "Sprite128.png",
 ]
-missing_assets = [str(path) for path in asset_paths if not path.is_file()]
+missing_assets = [str(path) for path in [*asset_paths, version_path] if not path.is_file()]
 if missing_assets:
     raise FileNotFoundError(
         "Missing CoreWarden branding assets. Run python scripts/build_icon.py first: "
@@ -50,6 +51,7 @@ exe = EXE(
     codesign_identity=None,
     entitlements_file=None,
     icon=str(icon_path),
+    version=str(version_path),
 )
 
 bundle = COLLECT(

@@ -161,6 +161,22 @@ Bedrock, OpenAI, logs, structured evidence, or the evidence recorder. Continue t
 diagnostic artifacts as operational data even though addresses and identifiers
 are excluded.
 
+## Judge acceptance (no node, credentials, or model spend)
+
+From an installed source checkout, one bounded PowerShell command exercises the real loopback HTTP
+transport, the four-method adapter, monitoring transitions, deduplication, and the fake diagnostic
+provider:
+
+```powershell
+.\scripts\judge_acceptance.ps1
+```
+
+It contacts no real node and makes no OpenAI or Bedrock request. Success requires the exact
+healthy → degraded → unchanged/deduplicated → materially changed → recovered → unavailable state
+sequence, exactly two fake-provider investigations, correct monitoring events, and clean
+provider-visible privacy assertions. See [JUDGE-QUICKSTART.txt](JUDGE-QUICKSTART.txt) and
+[SYNTHETIC-MONITORING-DEMO.md](SYNTHETIC-MONITORING-DEMO.md).
+
 ## Requirements
 
 - Windows is the supported desktop/package target
@@ -406,6 +422,10 @@ Build on Windows with the included PowerShell script:
 .\scripts\build_windows.ps1
 ```
 
+Release packaging is validated and intentionally pinned to 64-bit CPython 3.12.10. The build
+script fails closed on any other Python version. CI launches the finished GUI with the bounded
+smoke test and repeats that gate against a freshly extracted copy of the release ZIP.
+
 Close any `CoreWarden.exe` launched from the repository's `dist` directory before
 rebuilding; Windows keeps bundled DLLs locked while that app is running.
 
@@ -419,10 +439,11 @@ dist\CoreWarden\CoreWarden.exe
 release\CoreWarden-Windows-x64.zip
 ```
 
-Distribute the ZIP. It contains the complete `CoreWarden` onedir bundle, the
-short judge quickstart retained from the original hackathon build, the Apache-2.0 project license, and direct-dependency
-notices. The user does not need a separate Python installation, but still needs a reachable local node and either their own OpenAI
-project key or an authenticated AWS profile/session. A one-folder build is used
+Distribute the ZIP. It contains the complete `CoreWarden` onedir bundle, judge quickstart, README,
+synthetic acceptance guide and scripts, credential/privacy and Bitcoin II RPC setup docs, the
+Apache-2.0 project license, and direct-dependency notices. The packaged GUI does not need a
+separate Python installation, but live diagnosis still needs a reachable local node and either the
+user's own OpenAI project key or an authenticated AWS profile/session. A one-folder build is used
 instead of a one-file archive for predictable startup and dependency inspection.
 
 The approved `Sprite32.png`, `Sprite64.png`, and `Sprite128.png` files are kept
