@@ -7,7 +7,11 @@ param(
 )
 
 $ErrorActionPreference = "Stop"
-$expectedTitle = "CoreWarden — Read-only Node Health"
+$expectedTitle = [string]::Concat(
+    "CoreWarden ",
+    [char]0x2014,
+    " Read-only Node Health"
+)
 $resolved = (Resolve-Path -LiteralPath $BundlePath).Path
 $executable = if (Test-Path -LiteralPath $resolved -PathType Container) {
     Join-Path $resolved "CoreWarden.exe"

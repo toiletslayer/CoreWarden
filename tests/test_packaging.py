@@ -39,7 +39,11 @@ def test_windows_packaging_configuration_has_expected_safety_shape() -> None:
     assert 'Assert-NativeCommand "PyInstaller build"' in script
     assert 'Assert-NativeCommand "Release ZIP build"' in script
     assert 'if ($version.Trim() -ne "3.12.10")' in script
-    assert '"CoreWarden — Read-only Node Health"' in smoke
+    assert smoke.isascii()
+    assert '"CoreWarden "' in smoke
+    assert "[char]0x2014" in smoke
+    assert '" Read-only Node Health"' in smoke
+    assert acceptance.isascii()
     assert "Unhandled exception|Traceback|Error" in smoke
     assert "CloseMainWindow" in smoke
     assert "$process.Kill()" in smoke

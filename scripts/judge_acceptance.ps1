@@ -71,6 +71,6 @@ if (($events | Where-Object { $_ -eq "AI investigation started" }).Count -ne 2 -
     throw "Monitoring event semantics did not match degradation, deduplication, recovery, and unavailability expectations."
 }
 
-Write-Host "PASS: healthy → degraded → deduplicated → materially changed → recovered → unavailable"
+Write-Host "PASS: healthy -> degraded -> deduplicated -> materially changed -> recovered -> unavailable"
 Write-Host "PASS: exactly 2 fake-provider investigations"
 Write-Host "PASS: provider-visible privacy assertions are clean"
