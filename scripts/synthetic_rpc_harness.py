@@ -394,8 +394,11 @@ def run_acceptance() -> dict[str, Any]:
     monitor = MonitoringService(
         snapshot_source=lambda: evaluate_health(node),
         diagnosis_runner=lambda: diagnose(node, provider),
+        # This cost-free acceptance run deliberately exercises changed-condition handling
+        # without waiting through the production automatic-investigation cooldown.
+        automatic_cooldown_seconds=0,
     )
-    # Acceptance tooling advances cycles directly; production timing remains unchanged.
+    # Acceptance tooling advances cycles directly; production defaults remain unchanged.
     monitor._active = True
     try:
         for scenario in (
@@ -432,8 +435,7 @@ def _serve(port: int, scenario_file: Path, initial_scenario: str) -> None:
     harness = SyntheticRpcHarness(controller=controller, port=port)
     harness.start()
     print(f"Synthetic Core RPC: {harness.url}")
-    print(f"Test username: {TEST_RPC_USERNAME}")
-    print(f"Test password: {TEST_RPC_PASSWORD}")
+    print("Authentication uses fixed test-only credentials; values are not logged.")
     print(f"Scenario file: {scenario_file}")
     print(f"Scenarios: {', '.join(SCENARIO_NAMES)}")
     try:

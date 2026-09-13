@@ -29,7 +29,19 @@ def test_loads_minimal_environment() -> None:
             "must be set together",
         ),
         (
+            {
+                "COREWARDEN_RPC_URL": "http://node.example.invalid:8332",
+                "COREWARDEN_RPC_USER": "observer",
+                "COREWARDEN_RPC_PASSWORD": "fake-rpc-password",
+            },
+            "must use https://",
+        ),
+        (
             {"COREWARDEN_RPC_URL": "http://localhost", "COREWARDEN_RPC_TIMEOUT_SECONDS": "0"},
+            "greater than 0",
+        ),
+        (
+            {"COREWARDEN_RPC_URL": "http://localhost", "COREWARDEN_RPC_TIMEOUT_SECONDS": "nan"},
             "greater than 0",
         ),
         (
@@ -66,3 +78,25 @@ def test_loads_credentials_and_overrides() -> None:
     assert settings.model_id == "example.model-v1"
     assert settings.diagnostic_mode is True
     assert settings.evidence_path.as_posix() == "evidence/test.json"
+
+
+@pytest.mark.parametrize(
+    "rpc_url",
+    [
+        "http://127.0.0.1:8332",
+        "http://127.255.255.254:8332",
+        "http://[::1]:8332",
+        "http://localhost:8332",
+        "http://localhost.:8332",
+    ],
+)
+def test_allows_authenticated_plaintext_rpc_only_on_loopback(rpc_url: str) -> None:
+    settings = Settings.from_env(
+        {
+            "COREWARDEN_RPC_URL": rpc_url,
+            "COREWARDEN_RPC_USER": "observer",
+            "COREWARDEN_RPC_PASSWORD": "fake-rpc-password",
+        }
+    )
+
+    assert settings.rpc_url == rpc_url

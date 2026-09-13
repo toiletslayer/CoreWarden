@@ -14,6 +14,22 @@ APPROVED_ASSET_HASHES = {
 }
 
 
+def test_release_version_metadata_is_consistently_v021() -> None:
+    root = Path(__file__).parents[1]
+    pyproject = (root / "pyproject.toml").read_text(encoding="utf-8")
+    package = (root / "src" / "corewarden" / "__init__.py").read_text(encoding="utf-8")
+    windows = (root / "assets" / "windows-version-info.txt").read_text(encoding="utf-8")
+    quickstart = (root / "JUDGE-QUICKSTART.txt").read_text(encoding="utf-8")
+
+    assert 'version = "0.2.1"' in pyproject
+    assert '__version__ = "0.2.1"' in package
+    assert "filevers=(0, 2, 1, 0)" in windows
+    assert "prodvers=(0, 2, 1, 0)" in windows
+    assert "StringStruct('FileVersion', '0.2.1')" in windows
+    assert "StringStruct('ProductVersion', '0.2.1')" in windows
+    assert quickstart.startswith("CoreWarden v0.2.1 judge quickstart")
+
+
 def test_windows_packaging_configuration_has_expected_safety_shape() -> None:
     root = Path(__file__).parents[1]
     spec = (root / "CoreWarden.spec").read_text(encoding="utf-8")

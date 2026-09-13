@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import math
 import os
 import sys
 import threading
@@ -125,6 +126,22 @@ def format_monitoring_time(value: Any) -> str:
     if value is None:
         return "Never"
     return value.astimezone().strftime("%H:%M:%S")
+
+
+def format_automatic_investigation_status(status: MonitoringStatus) -> str:
+    """Render only safe aggregate automatic-investigation controls."""
+    window_hours = status.automatic_budget_window_seconds / 3600
+    if status.automatic_calls_remaining <= 0:
+        availability = "budget exhausted"
+    elif status.automatic_cooldown_remaining_seconds > 0:
+        minutes = max(1, math.ceil(status.automatic_cooldown_remaining_seconds / 60))
+        availability = f"cooldown {minutes} min"
+    else:
+        availability = "ready"
+    return (
+        f"Automatic AI: {status.automatic_calls_remaining}/{status.automatic_call_limit} "
+        f"remaining ({window_hours:g}h rolling), {availability}"
+    )
 
 
 def history_export_filename(extension: str, value: datetime | None = None) -> str:
@@ -598,7 +615,7 @@ class CoreWardenDesktop:
         self.monitor_details.set(
             f"Last check: {format_monitoring_time(status.last_check_at)} | "
             f"Last AI investigation: {format_monitoring_time(status.last_ai_at)} "
-            f"({status.last_ai_status})"
+            f"({status.last_ai_status}) | {format_automatic_investigation_status(status)}"
         )
         self.start_monitor_button.configure(state=tk.DISABLED if status.active else tk.NORMAL)
         self.stop_monitor_button.configure(state=tk.NORMAL if status.active else tk.DISABLED)

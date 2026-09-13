@@ -4,6 +4,9 @@ import csv
 import json
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
+from unittest.mock import patch
+
+import pytest
 
 from corewarden.history import (
     HISTORY_RETENTION_LIMIT,
@@ -83,6 +86,32 @@ def test_corrupt_history_does_not_block_startup_and_is_preserved_before_save(
     assert len(preserved) == 1
     assert preserved[0].read_text(encoding="utf-8") == "{not-json"
     assert json.loads(path.read_text(encoding="utf-8"))["events"][0]["reason"] == "Healthy"
+
+
+def test_oversized_history_is_rejected_by_bounded_read_and_preserved(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr("corewarden.history.HISTORY_FILE_MAX_BYTES", 32)
+    path = tmp_path / "oversized-history.json"
+    path.write_bytes(b"x" * 33)
+
+    store = HistoryStore(path)
+
+    assert store.events() == ()
+    assert store.warning == "Saved history could not be read; the existing file was left unchanged."
+    assert path.read_bytes() == b"x" * 33
+
+
+def test_inaccessible_history_has_normalized_warning(tmp_path: Path) -> None:
+    path = tmp_path / "inaccessible-history.json"
+    path.write_text("{}", encoding="utf-8")
+
+    with patch.object(Path, "open", side_effect=PermissionError("fake path detail")):
+        store = HistoryStore(path)
+
+    assert store.events() == ()
+    assert store.warning == "Saved history could not be read; the existing file was left unchanged."
+    assert "fake path detail" not in store.warning
 
 
 def test_unknown_fields_and_forbidden_values_are_not_loaded_or_persisted(tmp_path: Path) -> None:
@@ -200,3 +229,17 @@ def test_local_preferences_notice_is_bounded_and_corruption_is_safe(tmp_path: Pa
 
     path.write_text("not-json", encoding="utf-8")
     assert preferences.tray_notice_shown() is False
+
+
+def test_local_preferences_reject_oversized_and_inaccessible_files(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr("corewarden.history.PREFERENCES_FILE_MAX_BYTES", 16)
+    path = tmp_path / "preferences.json"
+    path.write_bytes(b"x" * 17)
+    preferences = LocalPreferences(path)
+
+    assert preferences.tray_notice_shown() is False
+
+    with patch.object(Path, "open", side_effect=PermissionError("fake path detail")):
+        assert preferences.tray_notice_shown() is False

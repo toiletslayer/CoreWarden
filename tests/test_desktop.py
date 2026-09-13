@@ -2,7 +2,9 @@ from __future__ import annotations
 
 import os
 from dataclasses import dataclass, field
+from pathlib import Path
 from typing import Any
+from unittest.mock import patch
 
 import pytest
 
@@ -14,6 +16,7 @@ from corewarden.desktop import (
 )
 from corewarden.errors import ConfigurationError, CredentialStorageError
 from corewarden.history import HistoryStore, SanitizedHistoryEvent
+from corewarden.monitoring import AutomaticInvestigationBudget
 from tests.test_agent import FakeNode, sample_diagnosis
 
 
@@ -75,6 +78,28 @@ def test_desktop_configuration_rejects_conflicting_or_invalid_rpc_auth(tmp_path:
     undecodable.write_bytes(b"\xff\xfe\xff")
     with pytest.raises(ConfigurationError, match="invalid"):
         configuration(rpc_cookie_path=str(undecodable)).settings()
+
+
+def test_rpc_cookie_read_is_bounded_before_validation(tmp_path: Any, monkeypatch: Any) -> None:
+    monkeypatch.setattr("corewarden.desktop.RPC_COOKIE_MAX_BYTES", 16)
+    oversized = tmp_path / "bounded-cookie"
+    oversized.write_bytes(b"x" * 17)
+
+    with pytest.raises(ConfigurationError, match="invalid"):
+        configuration(rpc_cookie_path=str(oversized)).settings()
+
+
+def test_inaccessible_rpc_cookie_has_normalized_error(tmp_path: Any) -> None:
+    cookie = tmp_path / "inaccessible-cookie"
+    cookie.write_text("fake-user:fake-password", encoding="utf-8")
+
+    with (
+        patch.object(Path, "open", side_effect=PermissionError("fake path detail")),
+        pytest.raises(ConfigurationError, match="could not be read") as caught,
+    ):
+        configuration(rpc_cookie_path=str(cookie)).settings()
+
+    assert "fake path detail" not in str(caught.value)
 
 
 def test_openai_credential_status_save_remove_and_environment_fallback() -> None:
@@ -260,6 +285,104 @@ def test_desktop_monitor_reuses_sanitized_node_and_selected_provider(
     assert monitor.run_cycle() is True
     assert diagnoses == []
     assert monitor.status.current_state.value == "healthy"
+
+
+def test_manual_diagnosis_is_not_blocked_by_exhausted_automatic_budget(
+    monkeypatch: Any, tmp_path: Any
+) -> None:
+    class DegradedNode(FakeNode):
+        def get_network_status(self) -> dict[str, Any]:
+            return {"networkactive": True, "connections": 0}
+
+        def get_peer_information(self) -> list[dict[str, Any]]:
+            return []
+
+    class FakeOpenAIProvider:
+        def __init__(self, *, api_key: str) -> None:
+            assert api_key == "saved-key"
+
+    monkeypatch.setattr("corewarden.desktop.OpenAIResponsesProvider", FakeOpenAIProvider)
+    calls: list[str] = []
+    shared_budget = AutomaticInvestigationBudget(cooldown_seconds=0, call_limit=1)
+    service = DesktopService(
+        FakeStore("saved-key"),
+        environment={},
+        node_factory=lambda settings: DegradedNode(),
+        diagnosis_runner=lambda node, provider: calls.append("diagnosis") or sample_diagnosis(),
+        history_store=HistoryStore(tmp_path / "history.json"),
+        automatic_investigation_budget=shared_budget,
+    )
+    first_monitor = service.create_monitor(configuration(), interval_seconds=300)
+    first_monitor._active = True
+
+    first_monitor.run_cycle()
+    first_monitor.stop(wait=False)
+    second_monitor = service.create_monitor(configuration(), interval_seconds=300)
+    second_monitor._active = True
+    second_monitor.run_cycle()
+
+    assert second_monitor.status.automatic_calls_remaining == 0
+    assert calls == ["diagnosis"]
+
+    service.run_diagnosis(configuration())
+
+    assert calls == ["diagnosis", "diagnosis"]
+
+
+def test_automatic_cooldown_ledger_survives_desktop_monitor_recreation(
+    monkeypatch: Any, tmp_path: Any
+) -> None:
+    class Clock:
+        value = 0.0
+
+        def __call__(self) -> float:
+            return self.value
+
+    class DegradedNode(FakeNode):
+        def get_network_status(self) -> dict[str, Any]:
+            return {"networkactive": True, "connections": 0}
+
+        def get_peer_information(self) -> list[dict[str, Any]]:
+            return []
+
+    class FakeOpenAIProvider:
+        def __init__(self, *, api_key: str) -> None:
+            pass
+
+    monkeypatch.setattr("corewarden.desktop.OpenAIResponsesProvider", FakeOpenAIProvider)
+    clock = Clock()
+    calls: list[str] = []
+    shared_budget = AutomaticInvestigationBudget(
+        cooldown_seconds=3600,
+        call_limit=2,
+        monotonic_clock=clock,
+    )
+    service = DesktopService(
+        FakeStore("saved-key"),
+        environment={},
+        node_factory=lambda settings: DegradedNode(),
+        diagnosis_runner=lambda node, provider: calls.append("diagnosis") or sample_diagnosis(),
+        history_store=HistoryStore(tmp_path / "history.json"),
+        automatic_investigation_budget=shared_budget,
+    )
+    first_monitor = service.create_monitor(configuration(), interval_seconds=300)
+    first_monitor._active = True
+    first_monitor.run_cycle()
+    first_monitor.stop(wait=False)
+
+    second_monitor = service.create_monitor(configuration(), interval_seconds=300)
+    second_monitor._active = True
+    second_monitor.run_cycle()
+
+    assert calls == ["diagnosis"]
+    assert second_monitor.status.automatic_calls_remaining == 1
+    assert second_monitor.status.automatic_cooldown_remaining_seconds == 3600
+
+    clock.value = 3600
+    second_monitor.run_cycle()
+
+    assert calls == ["diagnosis", "diagnosis"]
+    assert second_monitor.status.automatic_calls_remaining == 0
 
 
 def test_desktop_history_read_and_export_make_no_node_or_provider_calls(tmp_path: Any) -> None:

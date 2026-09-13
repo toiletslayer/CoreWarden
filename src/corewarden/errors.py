@@ -28,4 +28,4 @@ class RpcResponseError(CoreWardenError):
         self.method = method
         self.code = code
         self.rpc_message = message
-        super().__init__(f"RPC method {method!r} failed (code {code}): {message}")
+        super().__init__(f"RPC method {method!r} failed (code {code})")

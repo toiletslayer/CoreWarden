@@ -3,4 +3,4 @@
 from corewarden.models import Classification, Diagnosis
 
 __all__ = ["Classification", "Diagnosis"]
-__version__ = "0.2.0"
+__version__ = "0.2.1"

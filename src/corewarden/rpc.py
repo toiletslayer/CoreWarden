@@ -4,108 +4,30 @@ from __future__ import annotations
 
 import base64
 import json
-import re
+import math
 from collections.abc import Mapping, Sequence
+from contextlib import closing
 from dataclasses import dataclass
+from time import monotonic
 from typing import Any, Protocol, cast
 from urllib.error import HTTPError, URLError
-from urllib.request import Request, urlopen
+from urllib.request import HTTPRedirectHandler, ProxyHandler, Request, build_opener
 
-from corewarden.errors import RpcResponseError, RpcTransportError
+from corewarden.config import require_safe_rpc_auth_transport, validate_rpc_endpoint_url
+from corewarden.errors import ConfigurationError, RpcResponseError, RpcTransportError
 from corewarden.node import JsonObject
-
-_PEER_BOOLEAN_FIELDS = frozenset({"inbound", "relaytxes", "addr_relay_enabled"})
-_PEER_NUMERIC_FIELDS = frozenset(
-    {
-        "startingheight",
-        "synced_headers",
-        "synced_blocks",
-        "pingtime",
-        "minping",
-        "pingwait",
-        "conntime",
-        "lastsend",
-        "lastrecv",
-        "last_transaction",
-        "last_block",
-        "bytessent",
-        "bytesrecv",
-        "timeoffset",
-        "banscore",
-        "addr_processed",
-        "addr_rate_limited",
-    }
+from corewarden.observations import (
+    project_blockchain_status,
+    project_chain_tips,
+    project_network_status,
+    project_peer_information,
 )
-_PEER_TOKEN_FIELDS = frozenset({"connection_type", "transport_protocol_type", "services"})
-_SAFE_PEER_TOKEN = re.compile(r"^[A-Za-z0-9_+-]{1,64}$")
 
-
-def _is_safe_token(value: Any) -> bool:
-    return isinstance(value, str) and bool(_SAFE_PEER_TOKEN.fullmatch(value))
-
-
-def _project_network_health(network: Mapping[str, Any]) -> dict[str, Any]:
-    """Remove local/proxy endpoints while preserving network-health evidence."""
-    projected: dict[str, Any] = {}
-    for field in {"networkactive", "localrelay"}:
-        value = network.get(field)
-        if type(value) is bool:
-            projected[field] = value
-    for field in {"connections", "connections_in", "connections_out", "timeoffset"}:
-        value = network.get(field)
-        if isinstance(value, int | float) and not isinstance(value, bool):
-            projected[field] = value
-    for field in {"localservices", "warnings"}:
-        value = network.get(field)
-        if isinstance(value, str):
-            projected[field] = value
-
-    services = network.get("localservicesnames")
-    if isinstance(services, list) and all(_is_safe_token(item) for item in services):
-        projected["localservicesnames"] = list(services)
-
-    networks = network.get("networks")
-    if isinstance(networks, list):
-        safe_networks = []
-        for item in networks:
-            if not isinstance(item, Mapping) or not _is_safe_token(item.get("name")):
-                continue
-            safe_item = {"name": item["name"]}
-            for field in {"limited", "reachable"}:
-                if type(item.get(field)) is bool:
-                    safe_item[field] = item[field]
-            safe_networks.append(safe_item)
-        projected["networks"] = safe_networks
-    return projected
-
-
-def _project_peer_health(peer: Mapping[str, Any]) -> dict[str, Any]:
-    """Return only non-identifying fields needed for peer-health reasoning."""
-    projected: dict[str, Any] = {}
-    for field in _PEER_BOOLEAN_FIELDS:
-        value = peer.get(field)
-        if type(value) is bool:
-            projected[field] = value
-    for field in _PEER_NUMERIC_FIELDS:
-        value = peer.get(field)
-        if isinstance(value, int | float) and not isinstance(value, bool):
-            projected[field] = value
-    for field in _PEER_TOKEN_FIELDS:
-        value = peer.get(field)
-        is_numeric_token = isinstance(value, int) and not isinstance(value, bool)
-        if is_numeric_token or _is_safe_token(value):
-            projected[field] = value
-
-    services = peer.get("servicesnames")
-    if isinstance(services, list) and all(_is_safe_token(item) for item in services):
-        projected["servicesnames"] = list(services)
-
-    inflight = peer.get("inflight")
-    if isinstance(inflight, list) and all(
-        isinstance(item, int) and not isinstance(item, bool) for item in inflight
-    ):
-        projected["inflight"] = list(inflight)
-    return projected
+RPC_RESPONSE_MAX_BYTES = 4 * 1024 * 1024
+_RESPONSE_READ_CHUNK_BYTES = 64 * 1024
+ALLOWED_RPC_METHODS = frozenset(
+    {"getblockchaininfo", "getnetworkinfo", "getpeerinfo", "getchaintips"}
+)
 
 
 class RpcTransport(Protocol):
@@ -113,14 +35,120 @@ class RpcTransport(Protocol):
         """Call one parameterless RPC method."""
 
 
+class _RejectRedirects(HTTPRedirectHandler):
+    """Turn every redirect into an HTTP error before a second request is built."""
+
+    def redirect_request(
+        self,
+        request: Request,
+        file_pointer: Any,
+        code: int,
+        message: str,
+        headers: Any,
+        new_url: str,
+    ) -> None:
+        del new_url
+        raise HTTPError(request.full_url, code, message, headers, file_pointer)
+
+
+_DIRECT_OPENER = build_opener(ProxyHandler({}), _RejectRedirects())
+
+
+def _content_length(response: Any, method: str) -> int | None:
+    headers = getattr(response, "headers", None)
+    raw_value = headers.get("Content-Length") if headers is not None else None
+    if raw_value is None:
+        return None
+    try:
+        value = int(raw_value)
+    except (TypeError, ValueError):
+        raise RpcTransportError(
+            f"RPC endpoint returned invalid headers while calling {method!r}"
+        ) from None
+    if value < 0:
+        raise RpcTransportError(f"RPC endpoint returned invalid headers while calling {method!r}")
+    return value
+
+
+def _deadline_remaining(deadline: float, method: str) -> float:
+    remaining = deadline - monotonic()
+    if remaining <= 0:
+        raise RpcTransportError(f"RPC endpoint timed out while calling {method!r}")
+    return remaining
+
+
+def _read_bounded_body(
+    response: Any, method: str, *, maximum_bytes: int, deadline: float
+) -> bytes:
+    declared_length = _content_length(response, method)
+    if declared_length is not None and declared_length > maximum_bytes:
+        raise RpcTransportError(
+            f"RPC response exceeded the {maximum_bytes}-byte safety limit "
+            f"while calling {method!r}"
+        )
+
+    body = bytearray()
+    read = getattr(response, "read1", response.read)
+    while True:
+        _deadline_remaining(deadline, method)
+        remaining_capacity = maximum_bytes + 1 - len(body)
+        chunk = read(min(_RESPONSE_READ_CHUNK_BYTES, remaining_capacity))
+        _deadline_remaining(deadline, method)
+        if not isinstance(chunk, bytes | bytearray):
+            raise RpcTransportError(
+                f"RPC endpoint returned an invalid body while calling {method!r}"
+            )
+        if not chunk:
+            return bytes(body)
+        body.extend(chunk)
+        if len(body) > maximum_bytes:
+            raise RpcTransportError(
+                f"RPC response exceeded the {maximum_bytes}-byte safety limit "
+                f"while calling {method!r}"
+            )
+
+
 @dataclass(slots=True)
 class JsonRpcHttpTransport:
+    """Direct, no-redirect JSON-RPC transport with a bounded response body.
+
+    The configured timeout is also treated as a total request deadline. urllib's
+    socket timeout cannot asynchronously cancel an in-progress low-level read;
+    using ``read1`` where available and checking around every bounded read limits
+    that residual overrun, and an overdue response is rejected before JSON parsing.
+    """
+
     url: str
     username: str | None = None
     password: str | None = None
     timeout_seconds: float = 10.0
+    max_response_bytes: int = RPC_RESPONSE_MAX_BYTES
+
+    def __post_init__(self) -> None:
+        # Settings validates application input; repeat the critical credential
+        # policy here so direct transport construction cannot bypass it.
+        validate_rpc_endpoint_url(self.url)
+        if (self.username is None) != (self.password is None):
+            raise ConfigurationError("RPC username and password must be set together")
+        if self.username is not None:
+            require_safe_rpc_auth_transport(self.url)
+        if (
+            not isinstance(self.timeout_seconds, int | float)
+            or isinstance(self.timeout_seconds, bool)
+            or not math.isfinite(self.timeout_seconds)
+            or self.timeout_seconds <= 0
+        ):
+            raise ConfigurationError("RPC timeout must be greater than zero")
+        if (
+            not isinstance(self.max_response_bytes, int)
+            or isinstance(self.max_response_bytes, bool)
+            or self.max_response_bytes < 1
+        ):
+            raise ConfigurationError("RPC response safety limit must be at least one byte")
 
     def call(self, method: str) -> Any:
+        if method not in ALLOWED_RPC_METHODS:
+            raise ValueError(f"RPC method {method!r} is outside CoreWarden's read-only allow-list")
         payload = json.dumps(
             {"jsonrpc": "1.0", "id": "corewarden", "method": method, "params": []}
         ).encode("utf-8")
@@ -130,10 +158,24 @@ class JsonRpcHttpTransport:
             headers["Authorization"] = f"Basic {token}"
 
         request = Request(self.url, data=payload, headers=headers, method="POST")
+        deadline = monotonic() + self.timeout_seconds
         try:
-            with urlopen(request, timeout=self.timeout_seconds) as response:  # noqa: S310
-                body = response.read()
+            response = _DIRECT_OPENER.open(
+                request, timeout=_deadline_remaining(deadline, method)
+            )  # noqa: S310
+            with closing(response):
+                body = _read_bounded_body(
+                    response,
+                    method,
+                    maximum_bytes=self.max_response_bytes,
+                    deadline=deadline,
+                )
         except HTTPError as exc:
+            exc.close()
+            if 300 <= exc.code < 400:
+                raise RpcTransportError(
+                    f"RPC endpoint redirect rejected while calling {method!r}"
+                ) from exc
             raise RpcTransportError(
                 f"RPC endpoint returned HTTP {exc.code} while calling {method!r}"
             ) from exc
@@ -142,10 +184,11 @@ class JsonRpcHttpTransport:
 
         try:
             document = json.loads(body)
-        except (json.JSONDecodeError, UnicodeDecodeError) as exc:
+        except (json.JSONDecodeError, UnicodeDecodeError, ValueError, RecursionError) as exc:
             raise RpcTransportError(
                 f"RPC endpoint returned invalid JSON while calling {method!r}"
             ) from exc
+        _deadline_remaining(deadline, method)
         if not isinstance(document, dict):
             raise RpcTransportError(f"RPC response for {method!r} was not an object")
 
@@ -166,9 +209,7 @@ class JsonRpcHttpTransport:
 class CoreRpcNodeAdapter:
     """Adapter for nodes implementing the Bitcoin Core-style read RPC surface."""
 
-    _ALLOWED_METHODS = frozenset(
-        {"getblockchaininfo", "getnetworkinfo", "getpeerinfo", "getchaintips"}
-    )
+    _ALLOWED_METHODS = ALLOWED_RPC_METHODS
 
     def __init__(self, transport: RpcTransport) -> None:
         self._transport = transport
@@ -184,20 +225,20 @@ class CoreRpcNodeAdapter:
             raise RpcTransportError(f"RPC result for {method!r} was not an object")
         return cast(JsonObject, result)
 
-    def _objects(self, method: str) -> Sequence[JsonObject]:
+    def _list(self, method: str) -> list[Any]:
         result = self._call(method)
-        if not isinstance(result, list) or not all(isinstance(item, Mapping) for item in result):
+        if not isinstance(result, list):
             raise RpcTransportError(f"RPC result for {method!r} was not a list of objects")
-        return cast(Sequence[JsonObject], result)
+        return result
 
     def get_blockchain_status(self) -> JsonObject:
-        return self._object("getblockchaininfo")
+        return project_blockchain_status(self._object("getblockchaininfo"))
 
     def get_network_status(self) -> JsonObject:
-        return _project_network_health(self._object("getnetworkinfo"))
+        return project_network_status(self._object("getnetworkinfo"))
 
     def get_peer_information(self) -> Sequence[JsonObject]:
-        return [_project_peer_health(peer) for peer in self._objects("getpeerinfo")]
+        return project_peer_information(self._list("getpeerinfo"))
 
     def get_chain_tips(self) -> Sequence[JsonObject]:
-        return self._objects("getchaintips")
+        return project_chain_tips(self._list("getchaintips"))

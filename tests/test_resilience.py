@@ -144,6 +144,7 @@ def test_meaningful_degradations_flapping_and_recovery_have_bounded_escalation(
                 ),
                 event_callback=persisted_callback(store),
                 provider_name="Amazon Bedrock / Strands",
+                automatic_cooldown_seconds=0,
             )
         )
         sequence = [

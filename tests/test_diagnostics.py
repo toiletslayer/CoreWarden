@@ -6,7 +6,7 @@ from typing import Any
 import pytest
 
 from corewarden.diagnostics import EvidenceRecorder, SecretRedactor
-from corewarden.errors import RpcTransportError
+from corewarden.errors import RpcResponseError, RpcTransportError
 from corewarden.models import Classification, Diagnosis, Evidence
 from corewarden.rpc import CoreRpcNodeAdapter
 
@@ -123,8 +123,38 @@ def test_recorder_records_redacted_rpc_failure(tmp_path: Any) -> None:
     serialized = path.read_text(encoding="utf-8")
     document = json.loads(serialized)
     assert document["observations"][0]["status"] == "error"
+    assert document["observations"][0]["error_type"] == "rpc_transport_error"
+    assert document["observations"][0]["failure_category"] == "node_observation_failed"
+    assert document["run_error"] == {"failure_category": "rpc_transport_error"}
     assert "observer" not in serialized
     assert "very-secret" not in serialized
+
+
+def test_recorder_never_persists_node_controlled_rpc_error_text(tmp_path: Any) -> None:
+    marker = "MALICIOUS_RPC_ERROR_MARKER_MUST_NOT_PERSIST"
+
+    class FailingNode(EvidenceNode):
+        def get_blockchain_status(self) -> dict[str, Any]:
+            raise RpcResponseError("getblockchaininfo", -1, marker)
+
+    path = tmp_path / "malicious-error.json"
+    recorder = EvidenceRecorder(FailingNode(), path, SecretRedactor())
+
+    with pytest.raises(RpcResponseError):
+        recorder.get_blockchain_status()
+    recorder.write(None, {"error": "RpcResponseError", "message": marker})
+
+    document = json.loads(path.read_text(encoding="utf-8"))
+    assert marker not in path.read_text(encoding="utf-8")
+    assert document["observations"] == [
+        {
+            "source": "blockchain_status",
+            "status": "error",
+            "failure_category": "node_observation_failed",
+            "error_type": "rpc_response_error",
+        }
+    ]
+    assert document["run_error"] == {"failure_category": "rpc_response_error"}
 
 
 def test_structured_evidence_receives_only_sanitized_peer_metrics(tmp_path: Any) -> None:

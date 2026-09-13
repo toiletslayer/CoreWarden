@@ -14,6 +14,7 @@ from corewarden.gui import (
     CoreWardenDesktop,
     credential_status_text,
     default_rpc_url,
+    format_automatic_investigation_status,
     format_diagnosis,
     format_monitoring_state,
     format_monitoring_time,
@@ -136,6 +137,35 @@ def test_monitoring_status_formatting_is_concise() -> None:
     assert format_monitoring_state(off) == "Off"
     assert format_monitoring_state(active) == "Degraded"
     assert format_monitoring_time(None) == "Never"
+
+
+def test_automatic_investigation_status_reports_only_aggregate_guardrail_state() -> None:
+    status = MonitoringStatus(
+        False,
+        None,
+        None,
+        None,
+        "Never",
+        (),
+        automatic_calls_remaining=2,
+        automatic_call_limit=6,
+        automatic_cooldown_remaining_seconds=61,
+        automatic_budget_window_seconds=86400,
+    )
+
+    assert format_automatic_investigation_status(status) == (
+        "Automatic AI: 2/6 remaining (24h rolling), cooldown 2 min"
+    )
+    exhausted = MonitoringStatus(
+        False,
+        None,
+        None,
+        None,
+        "Never",
+        (),
+        automatic_calls_remaining=0,
+    )
+    assert "budget exhausted" in format_automatic_investigation_status(exhausted)
 
 
 def test_history_row_and_export_filename_are_human_readable() -> None:

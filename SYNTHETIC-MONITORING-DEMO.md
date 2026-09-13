@@ -28,7 +28,9 @@ The investigation implementation is a fake `DiagnosisProvider`; it invokes the s
 node capabilities but makes no OpenAI or Bedrock request. The wrapper removes provider credentials
 from the child environment, enforces a 30-second timeout, validates the exact state sequence,
 investigation count, event semantics, and provider-visible privacy assertion, and exits nonzero on
-any mismatch. Production monitoring intervals and GUI behavior are unchanged.
+any mismatch. Because the provider is cost-free and the sequence runs without real elapsed time,
+this development-only path explicitly disables the production one-hour automatic cooldown.
+Production monitoring keeps the cooldown and rolling call budget.
 
 ## Interactive local server
 

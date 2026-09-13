@@ -6,7 +6,7 @@ from pathlib import Path
 
 import pytest
 
-from corewarden.errors import RpcResponseError, RpcTransportError
+from corewarden.errors import RpcTransportError
 from corewarden.monitoring import HealthState, MonitoringService, evaluate_health
 from corewarden.rpc import CoreRpcNodeAdapter, JsonRpcHttpTransport
 from scripts.synthetic_rpc_harness import (
@@ -17,6 +17,7 @@ from scripts.synthetic_rpc_harness import (
     TEST_RPC_USERNAME,
     ScenarioController,
     SyntheticRpcHarness,
+    _serve,
     run_acceptance,
     scenario_payload,
 )
@@ -49,8 +50,10 @@ def test_synthetic_server_binds_only_to_loopback_and_supports_exact_allow_list()
             password=TEST_RPC_PASSWORD,
             timeout_seconds=1,
         )
-        with pytest.raises(RpcResponseError, match="Method not found"):
+        calls_before_rejection = harness.calls
+        with pytest.raises(ValueError, match="outside CoreWarden's read-only allow-list"):
             arbitrary.call("sendtoaddress")
+        assert harness.calls == calls_before_rejection
 
         assert {method for _, method in harness.calls} == ALLOWED_METHODS
     assert {
@@ -69,6 +72,13 @@ def test_synthetic_server_requires_isolated_test_authentication() -> None:
 
     assert TEST_RPC_USERNAME == "corewarden-test"
     assert TEST_RPC_PASSWORD.startswith("test-only-")
+
+
+def test_interactive_server_does_not_log_test_credentials() -> None:
+    source = inspect.getsource(_serve)
+
+    assert "TEST_RPC_USERNAME" not in source
+    assert "TEST_RPC_PASSWORD" not in source
 
 
 @pytest.mark.parametrize(

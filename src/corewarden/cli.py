@@ -19,7 +19,7 @@ from corewarden.diagnostics import (
     SecretRedactor,
     configure_diagnostic_logging,
 )
-from corewarden.errors import ConfigurationError, CoreWardenError
+from corewarden.errors import ConfigurationError, CoreWardenError, RpcResponseError
 from corewarden.openai_provider import OpenAIResponsesProvider
 from corewarden.provider import DiagnosisProvider
 from corewarden.rpc import CoreRpcNodeAdapter, JsonRpcHttpTransport
@@ -78,7 +78,13 @@ def main(argv: Sequence[str] | None = None) -> int:
             node = recorder
         report = diagnose(node, provider)
     except (CoreWardenError, ValidationError, RuntimeError) as exc:
-        error = {"error": type(exc).__name__, "message": redactor.text(str(exc))}
+        if isinstance(exc, RpcResponseError):
+            error = {
+                "error": "RpcResponseError",
+                "message": "Node RPC returned an error during a fixed read-only call.",
+            }
+        else:
+            error = {"error": type(exc).__name__, "message": redactor.text(str(exc))}
     except Exception as exc:
         logging.getLogger("corewarden").debug("Unexpected failure type: %s", type(exc).__name__)
         error = {

@@ -51,10 +51,15 @@ provider correlates the four read-only observations and returns a validated diag
 - `suspicious`
 - `likely_fault`
 
-Unchanged degradation is deduplicated, healthy steady state does not invoke AI,
-and RPC unavailability does not create a provider retry storm.
+Unchanged degradation is deduplicated, sync gaps use stable severity buckets instead of exact
+changing heights, healthy steady state does not invoke AI, and RPC unavailability does not create
+a provider retry storm. Automatic monitoring also enforces a one-hour global cooldown and at most
+six provider attempts in a rolling 24-hour window by default.
 
 ## Validated status
+
+The live/provider checks below were performed on the v0.2.0 baseline before the
+v0.2.1 security-hardening changes:
 
 - Live Strands/Bedrock diagnosis against Bitcoin II v31.1.0 in `us-west-2`
   using `global.anthropic.claude-sonnet-4-6`; all four tools succeeded.
@@ -62,9 +67,12 @@ and RPC unavailability does not create a provider retry storm.
 - Packaged monitoring against a real Bitcoin II node: healthy steady state,
   outage detection, and automatic recovery, with no AI call while healthy or
   unavailable.
+
+The current v0.2.1 candidate has:
+
 - Cost-free synthetic acceptance covering degradation, deduplication, changed
   degradation, recovery, unavailability, and provider-visible privacy.
-- **149 passing tests** in the current public-readiness checkpoint; hosted GitHub Actions CI is green.
+- **215 automated tests** in the current v0.2.1 security-hardening checkpoint.
 
 The committed [live evidence artifact](corewarden-evidence-live-healthy-success.json)
 contains the four sanitized observations and validated diagnosis. Its privacy
@@ -351,12 +359,23 @@ before the monitoring policy or a provider can receive observations.
 
 The local policy reports `healthy`, `degraded`, or `unavailable`. It records state transitions,
 meaningful condition changes, and controlled investigation outcomes in sanitized local history.
-Healthy steady state never invokes
-AI. A new or materially changed degraded fingerprint invokes the existing diagnosis workflow once;
-the same unchanged problem, including a failed provider attempt, is deduplicated for the remainder
-of that monitoring session. RPC unavailability is recorded locally without invoking AI, and
-recovery is recorded without a recovery model call. Monitoring never retries a provider simply
-because another timer cycle elapsed.
+Healthy steady state never invokes AI. Height gaps are fingerprinted by stable severity buckets
+(`0`, `1–5`, `6–50`, `51–500`, and over `500` blocks), so ordinary progress within a bucket does
+not become a new paid incident; crossing a bucket remains a meaningful condition change. A new or
+materially changed degraded fingerprint is eligible for the existing diagnosis workflow, while a
+repeated condition observes a 30-minute recurrence boundary after recovery.
+
+Automatic investigations have two additional process-local guardrails: a one-hour global cooldown
+across all fingerprints and a maximum of six provider attempts in a rolling 24-hour window. Failed
+attempts count because they can still incur provider usage. The incident ledger retains at most 128
+fingerprints. The monitoring panel reports the aggregate remaining allowance and cooldown without
+showing raw node data. Stopping/restarting the application creates a new in-memory allowance; use
+provider-side account budgets as the durable cost ceiling. The manual **Run Diagnosis** action is
+explicitly user-directed and is not silently blocked by the automatic-monitoring allowance.
+
+RPC unavailability is recorded locally without invoking AI, recovery is recorded without a
+recovery model call, and monitoring never retries a provider simply because another timer cycle
+elapsed.
 
 The monitor and model investigation run off the tkinter UI thread. Cycles do not overlap and
 duplicate monitoring loops are rejected. The recent-event panel remains bounded to 20 entries.
@@ -464,12 +483,14 @@ seen by the agent plus the final diagnosis. A recursive redactor removes known
 RPC credentials, username/password fields, authorization headers, Basic/Bearer
 values, cookies, tokens, private-key fields, and credentials embedded in URLs.
 Debug logs contain lifecycle events and tool names, never raw RPC requests,
-headers, or responses. At the RPC adapter boundary, peer results are projected
-onto health-only fields before reaching the tools, model, or recorder. Addresses,
-hostnames, bound/local endpoints, client subversions, peer IDs, AS mappings, and
-all unknown peer fields are discarded. Retained data is limited to connection
-direction/type, synchronization heights, latency and activity timing, transfer
-counters, capability tokens, and similarly non-identifying health metrics.
+headers, or responses. At the RPC adapter boundary, all four observations are
+projected onto exact, bounded health-only schemas before reaching the tools,
+model, or recorder. Both provider implementations repeat that projection as a
+backstop for custom node implementations. Addresses, hostnames, bound/local
+endpoints, client subversions, peer IDs, AS mappings, unknown fields, invalid
+types, non-finite numbers, and oversized list contents are discarded. Arbitrary
+node warning text is replaced by a controlled warning-present marker rather than
+being forwarded to a model.
 
 See [LIVE_VALIDATION.md](LIVE_VALIDATION.md) for the Bitcoin II healthy-node run,
 expected output, evidence review, and the safe reversible controlled-fault test.
@@ -523,6 +544,14 @@ single-metric conclusions, and report uncertainty. The invocation passes
 and exposes it as `AgentResult.structured_output`. Because the CLI constructs the
 provider only after the Core-compatible adapter and optional evidence recorder,
 the provider boundary cannot receive raw peer or local endpoint metadata.
+
+Bedrock/Strands diagnosis is also bounded independently of monitoring. The Bedrock model receives
+a 4,096-token per-response maximum, while each agent invocation permits at most six turns, 12,000
+aggregate output tokens, and 64,000 total tokens, with a 120-second wall-clock cancellation signal.
+CoreWarden rejects any result stopped by cancellation or a turn/token limit, even if it contains a
+structured object. Strands cancellation is cooperative: it bounds compliant agent execution but
+cannot forcibly interrupt a third-party call that ignores the supplied signal. The deadline timer
+is always cancelled and joined before the provider returns.
 
 ## Tests
 
