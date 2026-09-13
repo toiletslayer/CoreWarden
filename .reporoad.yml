@@ -1,0 +1,9 @@
+version: 1
+style: stone
+color: "#465A6B"
+roof: gable
+signText: CoreWarden
+garden: true
+support:
+  sponsor: false
+  helpWanted: true

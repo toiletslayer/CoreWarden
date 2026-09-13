@@ -598,6 +598,9 @@ CoreWarden originated in the AWS Agents for Humans hackathon context. The
 submission assets and recording plans from ongoing project documentation and
 useful technical validation records.
 
+RepoRoad discovery metadata was added after v0.2.1. It does not change
+application behavior.
+
 ## Development references
 
 The implementation follows the current official Strands guidance:
