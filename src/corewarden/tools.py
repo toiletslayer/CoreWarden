@@ -8,6 +8,12 @@ from typing import Any, TypeVar
 from strands import tool
 
 from corewarden.node import CoreNode
+from corewarden.observations import (
+    project_blockchain_status,
+    project_chain_tips,
+    project_network_status,
+    project_peer_information,
+)
 
 _T = TypeVar("_T")
 _SAFE_TOOL_FAILURE = "The fixed read-only node tool failed; treat its evidence as unavailable."
@@ -25,23 +31,23 @@ def create_diagnostic_tools(node: CoreNode) -> list[Callable[..., Any]]:
 
     @tool
     def get_blockchain_status() -> dict[str, Any]:
-        """Read local chain height, header height, sync progress, chainwork, and warnings."""
-        return dict(_safe_read(node.get_blockchain_status))
+        """Read local chain height, header height, synchronization state, and warning presence."""
+        return _safe_read(lambda: project_blockchain_status(node.get_blockchain_status()))
 
     @tool
     def get_network_status() -> dict[str, Any]:
         """Read network activity, inbound/outbound connection counts, and network warnings."""
-        return dict(_safe_read(node.get_network_status))
+        return _safe_read(lambda: project_network_status(node.get_network_status()))
 
     @tool
     def get_peer_information() -> list[dict[str, Any]]:
         """Read peer connectivity, direction, services, latency, and peer-reported heights."""
-        return [dict(peer) for peer in _safe_read(node.get_peer_information)]
+        return _safe_read(lambda: project_peer_information(node.get_peer_information()))
 
     @tool
     def get_chain_tips() -> list[dict[str, Any]]:
         """Read active, valid-fork, and invalid chain tips known to the local node."""
-        return [dict(tip) for tip in _safe_read(node.get_chain_tips)]
+        return _safe_read(lambda: project_chain_tips(node.get_chain_tips()))
 
     return [
         get_blockchain_status,

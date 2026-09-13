@@ -8,7 +8,7 @@ import pytest
 
 from corewarden.cli import main
 from corewarden.config import Settings
-from corewarden.errors import ConfigurationError, ProviderError
+from corewarden.errors import ConfigurationError, ProviderError, RpcResponseError
 from corewarden.models import Classification, Diagnosis, Evidence
 
 
@@ -93,6 +93,51 @@ def test_main_writes_redacted_diagnostic_evidence(
     assert evidence_path.exists()
     assert "observer" not in output
     assert "very-secret" not in output
+
+
+def test_main_evidence_and_stderr_drop_node_controlled_rpc_error_text(
+    monkeypatch: Any, tmp_path: Any, capsys: Any
+) -> None:
+    marker = "MALICIOUS_RPC_ERROR_MARKER_MUST_NOT_ESCAPE"
+    evidence_path = tmp_path / "rpc-error.json"
+    settings = Settings(
+        rpc_url="http://127.0.0.1:8337",
+        diagnostic_mode=True,
+        evidence_path=evidence_path,
+    )
+
+    class FailingNode(LiveLikeNode):
+        def get_blockchain_status(self) -> dict[str, Any]:
+            raise RpcResponseError("getblockchaininfo", -1, marker)
+
+    monkeypatch.setattr("corewarden.cli.Settings.from_env", lambda: settings)
+    monkeypatch.setattr("corewarden.cli.CoreRpcNodeAdapter", lambda transport: FailingNode())
+    monkeypatch.setattr("corewarden.cli.StrandsBedrockProvider", lambda model: object())
+
+    def fail_diagnosis(node: Any, provider: Any) -> Diagnosis:
+        node.get_blockchain_status()
+        raise AssertionError("unreachable")
+
+    monkeypatch.setattr("corewarden.cli.diagnose", fail_diagnosis)
+
+    try:
+        assert main([]) == 2
+    finally:
+        logging.getLogger("corewarden").handlers.clear()
+
+    captured = capsys.readouterr()
+    serialized = evidence_path.read_text(encoding="utf-8")
+    assert marker not in captured.out + captured.err + serialized
+    # Diagnostic mode intentionally emits controlled lifecycle logs before the
+    # final machine-readable error line.  Parse that final line while retaining
+    # the whole-stream marker assertion above.
+    assert json.loads(captured.err.splitlines()[-1]) == {
+        "error": "RpcResponseError",
+        "message": "Node RPC returned an error during a fixed read-only call.",
+    }
+    evidence = json.loads(serialized)
+    assert evidence["observations"][0]["error_type"] == "rpc_response_error"
+    assert evidence["run_error"] == {"failure_category": "rpc_response_error"}
 
 
 def test_main_reports_configuration_error_as_json(monkeypatch: Any, capsys: Any) -> None:

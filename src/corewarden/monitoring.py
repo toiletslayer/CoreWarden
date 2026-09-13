@@ -4,9 +4,10 @@ from __future__ import annotations
 
 import hashlib
 import json
+import math
 import threading
 import time
-from collections import deque
+from collections import OrderedDict, deque
 from collections.abc import Callable, Mapping, Sequence
 from contextlib import suppress
 from dataclasses import dataclass, field
@@ -19,6 +20,10 @@ from corewarden.node import CoreNode
 
 DEFAULT_MONITORING_INTERVAL_SECONDS = 5 * 60
 DEFAULT_RECURRENCE_COOLDOWN_SECONDS = 30 * 60
+DEFAULT_AUTOMATIC_COOLDOWN_SECONDS = 60 * 60
+DEFAULT_AUTOMATIC_CALL_LIMIT = 6
+DEFAULT_AUTOMATIC_BUDGET_WINDOW_SECONDS = 24 * 60 * 60
+DEFAULT_INCIDENT_LIMIT = 128
 SUPPORTED_MONITORING_INTERVAL_MINUTES = (5, 10, 15, 30, 60)
 DEFAULT_HISTORY_LIMIT = 20
 
@@ -59,6 +64,10 @@ class MonitoringStatus:
     last_ai_at: datetime | None
     last_ai_status: str
     events: tuple[MonitoringEvent, ...]
+    automatic_calls_remaining: int = DEFAULT_AUTOMATIC_CALL_LIMIT
+    automatic_call_limit: int = DEFAULT_AUTOMATIC_CALL_LIMIT
+    automatic_cooldown_remaining_seconds: float = 0.0
+    automatic_budget_window_seconds: float = DEFAULT_AUTOMATIC_BUDGET_WINDOW_SECONDS
 
 
 def _number(value: Any) -> float | None:
@@ -73,6 +82,31 @@ def _warning(value: Any) -> bool:
     if isinstance(value, list):
         return bool(value)
     return False
+
+
+def _finite_number(value: Any) -> bool:
+    if not isinstance(value, int | float) or isinstance(value, bool):
+        return False
+    try:
+        return math.isfinite(value)
+    except OverflowError:
+        return False
+
+
+def _height_gap_category(blocks: float | None, headers: float | None) -> str:
+    """Bucket a changing sync gap into stable, operationally meaningful conditions."""
+    if blocks is None or headers is None:
+        return "unknown"
+    gap = max(0, int(headers - blocks))
+    if gap == 0:
+        return "caught_up"
+    if gap <= 5:
+        return "minor_1_to_5"
+    if gap <= 50:
+        return "moderate_6_to_50"
+    if gap <= 500:
+        return "large_51_to_500"
+    return "very_large_over_500"
 
 
 def _fingerprint(state: HealthState, signals: Mapping[str, Any]) -> str:
@@ -188,13 +222,12 @@ def evaluate_health(node: CoreNode, *, now: Callable[[], datetime] | None = None
     }
     condition_signals = {
         "reasons": signals["reasons"],
-        "height_gap": (
-            max(0, int(headers - blocks)) if blocks is not None and headers is not None else None
-        ),
+        "height_gap_category": _height_gap_category(blocks, headers),
         "networkactive": signals["networkactive"],
         "connection_condition": "none" if connections is not None and connections <= 0 else "some",
         "active_tip_condition": "present" if active_tips else "missing",
     }
+    signals["height_gap_category"] = condition_signals["height_gap_category"]
     return HealthSnapshot(
         state,
         tuple(sorted(set(reasons))),
@@ -205,8 +238,59 @@ def evaluate_health(node: CoreNode, *, now: Callable[[], datetime] | None = None
 
 
 @dataclass(slots=True)
+class AutomaticInvestigationBudget:
+    """Process-local, thread-safe allowance shared by automatic monitors."""
+
+    cooldown_seconds: float = DEFAULT_AUTOMATIC_COOLDOWN_SECONDS
+    call_limit: int = DEFAULT_AUTOMATIC_CALL_LIMIT
+    window_seconds: float = DEFAULT_AUTOMATIC_BUDGET_WINDOW_SECONDS
+    monotonic_clock: Callable[[], float] = field(default=time.monotonic, repr=False)
+    _call_boundaries: deque[float] = field(default_factory=deque, init=False, repr=False)
+    _last_call_boundary: float | None = field(default=None, init=False, repr=False)
+    _lock: threading.RLock = field(default_factory=threading.RLock, init=False, repr=False)
+
+    def __post_init__(self) -> None:
+        if not _finite_number(self.cooldown_seconds) or self.cooldown_seconds < 0:
+            raise ValueError(
+                "Automatic investigation cooldown must be a finite non-negative number"
+            )
+        if isinstance(self.call_limit, bool) or not isinstance(self.call_limit, int):
+            raise ValueError("Automatic investigation call limit must be a positive integer")
+        if self.call_limit < 1:
+            raise ValueError("Automatic investigation call limit must be a positive integer")
+        if not _finite_number(self.window_seconds) or self.window_seconds < 60:
+            raise ValueError("Automatic investigation budget window must be at least 60 seconds")
+
+    def _capacity(self, now: float) -> tuple[int, float]:
+        cutoff = now - self.window_seconds
+        while self._call_boundaries and self._call_boundaries[0] <= cutoff:
+            self._call_boundaries.popleft()
+        remaining = max(0, self.call_limit - len(self._call_boundaries))
+        cooldown_remaining = 0.0
+        if self._last_call_boundary is not None:
+            elapsed = max(0.0, now - self._last_call_boundary)
+            cooldown_remaining = max(0.0, self.cooldown_seconds - elapsed)
+        return remaining, cooldown_remaining
+
+    def status(self) -> tuple[int, float]:
+        with self._lock:
+            return self._capacity(self.monotonic_clock())
+
+    def reserve(self) -> bool:
+        """Atomically reserve one automatic provider attempt when capacity is available."""
+        with self._lock:
+            now = self.monotonic_clock()
+            remaining, cooldown_remaining = self._capacity(now)
+            if remaining <= 0 or cooldown_remaining > 0:
+                return False
+            self._call_boundaries.append(now)
+            self._last_call_boundary = now
+            return True
+
+
+@dataclass(slots=True)
 class MonitoringService:
-    """Run non-overlapping local checks and escalate changed degradation once."""
+    """Run local checks with bounded, rate-limited automatic investigations."""
 
     snapshot_source: Callable[[], HealthSnapshot]
     diagnosis_runner: Callable[[], Diagnosis]
@@ -216,6 +300,12 @@ class MonitoringService:
     event_callback: Callable[[MonitoringEvent], None] | None = field(default=None, repr=False)
     provider_name: str | None = None
     monotonic_clock: Callable[[], float] = field(default=time.monotonic, repr=False)
+    recurrence_cooldown_seconds: float = DEFAULT_RECURRENCE_COOLDOWN_SECONDS
+    automatic_cooldown_seconds: float = DEFAULT_AUTOMATIC_COOLDOWN_SECONDS
+    automatic_call_limit: int = DEFAULT_AUTOMATIC_CALL_LIMIT
+    automatic_budget_window_seconds: float = DEFAULT_AUTOMATIC_BUDGET_WINDOW_SECONDS
+    incident_limit: int = DEFAULT_INCIDENT_LIMIT
+    automatic_budget: AutomaticInvestigationBudget | None = field(default=None, repr=False)
     _events: deque[MonitoringEvent] = field(init=False, repr=False)
     _lock: threading.RLock = field(default_factory=threading.RLock, init=False, repr=False)
     _cycle_lock: threading.Lock = field(default_factory=threading.Lock, init=False, repr=False)
@@ -225,17 +315,72 @@ class MonitoringService:
     _snapshot: HealthSnapshot | None = field(default=None, init=False, repr=False)
     _last_ai_at: datetime | None = field(default=None, init=False, repr=False)
     _last_ai_status: str = field(default="Never", init=False)
-    _incident_boundaries: dict[str, float] = field(default_factory=dict, init=False, repr=False)
+    _incident_boundaries: OrderedDict[str, float] = field(
+        default_factory=OrderedDict, init=False, repr=False
+    )
+    _pending_fingerprints: OrderedDict[str, None] = field(
+        default_factory=OrderedDict, init=False, repr=False
+    )
 
     def __post_init__(self) -> None:
-        if self.interval_seconds < 60:
+        if (
+            not _finite_number(self.interval_seconds)
+            or self.interval_seconds < 60
+        ):
             raise ValueError("Monitoring interval must be at least 60 seconds")
+        if isinstance(self.history_limit, bool) or not isinstance(self.history_limit, int):
+            raise ValueError("Monitoring history limit must be an integer")
         if self.history_limit < 1:
             raise ValueError("Monitoring history limit must be at least 1")
+        for label, value in (
+            ("Recurrence cooldown", self.recurrence_cooldown_seconds),
+            ("Automatic investigation cooldown", self.automatic_cooldown_seconds),
+        ):
+            if not _finite_number(value) or value < 0:
+                raise ValueError(f"{label} must be a finite non-negative number")
+        if (
+            not _finite_number(self.automatic_budget_window_seconds)
+            or self.automatic_budget_window_seconds < 60
+        ):
+            raise ValueError("Automatic investigation budget window must be at least 60 seconds")
+        for label, value in (
+            ("Automatic investigation call limit", self.automatic_call_limit),
+            ("Incident limit", self.incident_limit),
+        ):
+            if isinstance(value, bool) or not isinstance(value, int) or value < 1:
+                raise ValueError(f"{label} must be a positive integer")
+        if self.automatic_budget is None:
+            self.automatic_budget = AutomaticInvestigationBudget(
+                cooldown_seconds=self.automatic_cooldown_seconds,
+                call_limit=self.automatic_call_limit,
+                window_seconds=self.automatic_budget_window_seconds,
+                monotonic_clock=self.monotonic_clock,
+            )
+        elif not isinstance(self.automatic_budget, AutomaticInvestigationBudget):
+            raise ValueError("Automatic investigation budget must be valid shared state")
+        else:
+            self.automatic_cooldown_seconds = self.automatic_budget.cooldown_seconds
+            self.automatic_call_limit = self.automatic_budget.call_limit
+            self.automatic_budget_window_seconds = self.automatic_budget.window_seconds
         self._events = deque(maxlen=self.history_limit)
+
+    def _remember_incident(self, fingerprint: str, boundary: float) -> None:
+        self._incident_boundaries[fingerprint] = boundary
+        self._incident_boundaries.move_to_end(fingerprint)
+        while len(self._incident_boundaries) > self.incident_limit:
+            self._incident_boundaries.popitem(last=False)
+
+    def _remember_pending(self, fingerprint: str) -> None:
+        self._pending_fingerprints[fingerprint] = None
+        self._pending_fingerprints.move_to_end(fingerprint)
+        while len(self._pending_fingerprints) > self.incident_limit:
+            self._pending_fingerprints.popitem(last=False)
 
     @property
     def status(self) -> MonitoringStatus:
+        budget = self.automatic_budget
+        assert budget is not None
+        remaining, cooldown_remaining = budget.status()
         with self._lock:
             return MonitoringStatus(
                 active=self._active,
@@ -244,6 +389,10 @@ class MonitoringService:
                 last_ai_at=self._last_ai_at,
                 last_ai_status=self._last_ai_status,
                 events=tuple(self._events),
+                automatic_calls_remaining=remaining,
+                automatic_call_limit=self.automatic_call_limit,
+                automatic_cooldown_remaining_seconds=cooldown_remaining,
+                automatic_budget_window_seconds=self.automatic_budget_window_seconds,
             )
 
     def _publish(self) -> None:
@@ -284,7 +433,7 @@ class MonitoringService:
 
     def start(self) -> bool:
         with self._lock:
-            if self._active:
+            if self._active or (self._thread is not None and self._thread.is_alive()):
                 return False
             self._active = True
             self._stop_event.clear()
@@ -342,12 +491,13 @@ class MonitoringService:
             )
             cycle_time = self.monotonic_clock()
             if recovered:
-                if (
-                    previous is not None
-                    and previous.state is HealthState.DEGRADED
-                    and previous.fingerprint in self._incident_boundaries
-                ):
-                    self._incident_boundaries[previous.fingerprint] = cycle_time
+                with self._lock:
+                    if (
+                        previous is not None
+                        and previous.state is HealthState.DEGRADED
+                        and previous.fingerprint in self._incident_boundaries
+                    ):
+                        self._remember_incident(previous.fingerprint, cycle_time)
                 self._record(
                     "Node recovered",
                     snapshot.state,
@@ -374,19 +524,36 @@ class MonitoringService:
                     fingerprint_category=snapshot.fingerprint,
                 )
 
-            prior_boundary = self._incident_boundaries.get(snapshot.fingerprint)
-            recurrence_eligible = (
-                prior_boundary is None
-                or cycle_time - prior_boundary >= DEFAULT_RECURRENCE_COOLDOWN_SECONDS
-            )
-            should_investigate = (
-                snapshot.state is HealthState.DEGRADED
-                and changed
-                and recurrence_eligible
-                and not self._stop_event.is_set()
-            )
+            with self._lock:
+                prior_boundary = self._incident_boundaries.get(snapshot.fingerprint)
+                recurrence_eligible = (
+                    prior_boundary is None
+                    or cycle_time - prior_boundary >= self.recurrence_cooldown_seconds
+                )
+                if snapshot.state is not HealthState.DEGRADED or changed:
+                    self._pending_fingerprints.clear()
+                pending = snapshot.fingerprint in self._pending_fingerprints
+                candidate = changed or pending
+                eligible_for_budget = (
+                    snapshot.state is HealthState.DEGRADED
+                    and candidate
+                    and recurrence_eligible
+                    and not self._stop_event.is_set()
+                )
+            budget = self.automatic_budget
+            assert budget is not None
+            should_investigate = eligible_for_budget and budget.reserve()
+            with self._lock:
+                if should_investigate:
+                    self._pending_fingerprints.pop(snapshot.fingerprint, None)
+                    self._remember_incident(snapshot.fingerprint, cycle_time)
+                elif (
+                    snapshot.state is HealthState.DEGRADED
+                    and candidate
+                    and not self._stop_event.is_set()
+                ):
+                    self._remember_pending(snapshot.fingerprint)
             if should_investigate:
-                self._incident_boundaries[snapshot.fingerprint] = cycle_time
                 self._last_ai_at = datetime.now(timezone.utc)
                 self._record(
                     "AI investigation started",

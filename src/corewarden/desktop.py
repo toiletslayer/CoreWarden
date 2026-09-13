@@ -28,11 +28,17 @@ from corewarden.history import (
     persisted_event_from_monitoring,
 )
 from corewarden.models import Diagnosis
-from corewarden.monitoring import MonitoringService, MonitoringStatus, evaluate_health
+from corewarden.monitoring import (
+    AutomaticInvestigationBudget,
+    MonitoringService,
+    MonitoringStatus,
+    evaluate_health,
+)
 from corewarden.openai_provider import OpenAIResponsesProvider
 from corewarden.rpc import CoreRpcNodeAdapter, JsonRpcHttpTransport
 
 DEFAULT_DESKTOP_RPC_URL = "http://127.0.0.1:8337"
+RPC_COOKIE_MAX_BYTES = 4096
 
 
 @dataclass(frozen=True, slots=True)
@@ -87,10 +93,11 @@ def _resolve_rpc_credentials(configuration: DesktopConfiguration) -> tuple[str, 
     if not cookie_path:
         return explicit_user, explicit_password
     try:
-        data = Path(cookie_path).read_bytes()
+        with Path(cookie_path).open("rb") as handle:
+            data = handle.read(RPC_COOKIE_MAX_BYTES + 1)
     except OSError:
         raise ConfigurationError("The configured RPC cookie file could not be read.") from None
-    if len(data) > 4096:
+    if len(data) > RPC_COOKIE_MAX_BYTES:
         raise ConfigurationError("The configured RPC cookie file is invalid.")
     try:
         text = data.decode("utf-8").strip()
@@ -157,6 +164,9 @@ class DesktopService:
     diagnosis_runner: Callable[[Any, Any], Diagnosis] = field(default=diagnose, repr=False)
     history_store: HistoryStore | None = field(default=None, repr=False)
     preferences: LocalPreferences | None = field(default=None, repr=False)
+    automatic_investigation_budget: AutomaticInvestigationBudget = field(
+        default_factory=AutomaticInvestigationBudget, repr=False
+    )
     _diagnosis_lock: threading.Lock = field(default_factory=threading.Lock, init=False, repr=False)
 
     def __post_init__(self) -> None:
@@ -279,6 +289,7 @@ class DesktopService:
             status_callback=status_callback,
             event_callback=persist_event,
             provider_name=provider_name,
+            automatic_budget=self.automatic_investigation_budget,
         )
 
     def history_events(self) -> tuple[SanitizedHistoryEvent, ...]:

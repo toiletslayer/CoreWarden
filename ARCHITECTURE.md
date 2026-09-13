@@ -13,7 +13,7 @@ flowchart TB
     Monitor --> History[Allow-listed local history store]
     History --> LocalData[Local AppData JSON / JSON and CSV export]
     Monitor --> Health[Local deterministic health evaluation]
-    Monitor -- new or changed degradation only --> Workflow[diagnose workflow]
+    Monitor -- eligible degradation only --> Workflow[diagnose workflow]
     Desktop -- manual diagnosis --> Workflow
     CLI --> Workflow
 
@@ -32,7 +32,7 @@ flowchart TB
 
     Node -- raw RPC observations --> Transport
     Transport -- raw results --> Adapter
-    Adapter -- sanitized peer/network health plus read-only chain data --> CoreNode
+    Adapter -- exact bounded health schemas --> CoreNode
 
     GUI --> History
     GUI --> Tray[Windows system tray while monitoring]
@@ -49,29 +49,52 @@ Monitoring is off until the operator starts it. A cycle calls the same four
 read-only node methods used by diagnosis and produces a normalized snapshot:
 
 - `healthy`: no AI call;
-- new or materially changed `degraded`: one diagnosis through the explicitly
+- new or materially changed `degraded`: eligible for diagnosis through the explicitly
   selected provider;
 - unchanged `degraded`: no repeated diagnosis;
 - `unavailable`: record locally without invoking a provider;
 - return to `healthy`: record recovery without a recovery AI call.
 
-Fingerprints describe the condition rather than absolute block height, so routine
-chain advancement does not consume AI usage. Cycle and diagnosis locks prevent
-overlap. Recent GUI history remains bounded in memory. A separate allow-listed
-history projection persists the newest 1000 safe events under non-roaming Local
+Fingerprints describe the condition rather than absolute block height. A changing header gap is
+represented by stable `0`, `1–5`, `6–50`, `51–500`, or over-`500` severity buckets, so routine sync
+progress inside a bucket does not consume AI usage while a meaningful boundary crossing remains
+observable.
+
+Automatic investigations are further bounded by a global one-hour cooldown independent of
+fingerprint, six attempted provider calls in a rolling 24-hour window, and a 128-entry in-memory
+incident ledger. A fingerprint deferred by cooldown or budget remains pending, so it can become
+eligible after capacity returns rather than being lost merely because the next snapshot is
+unchanged. The GUI exposes only remaining allowance and cooldown duration. These automatic limits
+are process-local; manual diagnosis is a separate, user-directed path. Provider-side account
+budgets remain the durable control across application restarts.
+
+Cycle and diagnosis locks prevent overlap. Recent GUI history remains bounded in memory. A separate
+allow-listed history projection persists the newest 1000 safe events under non-roaming Local
 AppData and survives restart; it never stores raw observations or provider output.
+
+## Provider execution limits
+
+The Bedrock provider constructs an explicit `BedrockModel` with a 4,096-token response maximum.
+Every Strands invocation receives a six-turn, 12,000-output-token, and 64,000-total-token limit plus
+a 120-second cancellation event. Cancelled and turn/token-stopped results fail closed even if
+structured output is present. The deadline timer is cancelled and joined on every exit path.
+Strands cancellation is cooperative, so an underlying library or network operation that ignores
+the signal cannot be killed safely by CoreWarden's thread; the result is still rejected after
+control returns.
 
 ## Privacy boundary
 
-The JSON-RPC transport can receive raw `getnetworkinfo` and `getpeerinfo` results.
-`CoreRpcNodeAdapter` projects those results onto explicit health-only fields before
-returning them through `CoreNode`. Peer addresses, local/bound addresses, hostnames,
-client subversions, peer/session IDs, AS mappings, proxy/listener endpoints, and
-unknown peer fields are discarded at this boundary.
+The JSON-RPC transport can receive raw results for all four allowed methods.
+`CoreRpcNodeAdapter` projects each observation onto an exact, bounded health-only
+schema before returning it through `CoreNode`. Peer addresses, local/bound addresses,
+hostnames, client subversions, peer/session IDs, AS mappings, proxy/listener endpoints,
+unknown fields, invalid types, non-finite numbers, and oversized list contents are
+discarded at this boundary. Free-form warnings become a controlled presence marker.
 
-Providers receive the adapter, never the transport. Monitoring uses the same
-adapter. Diagnostic evidence recording wraps the sanitized interface, so it does
-not create a second raw-data path. Persistent history consumes typed, controlled
+Providers receive the adapter, never the transport, and both provider tool paths
+repeat the exact projection so a custom `CoreNode` cannot bypass it. Monitoring uses
+the same adapter. Diagnostic evidence recording wraps the sanitized interface, so it
+does not create a second raw-data path. Persistent history consumes typed, controlled
 monitoring events rather than transport/provider payloads, so it does not create a
 second weaker sanitization path. JSON and CSV exports use only that persisted schema.
 

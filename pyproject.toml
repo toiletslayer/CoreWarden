@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "corewarden"
-version = "0.2.0"
+version = "0.2.1"
 description = "A local-first, read-only AI monitor for Bitcoin Core-compatible nodes"
 readme = "README.md"
 requires-python = ">=3.10"
@@ -26,7 +26,7 @@ dependencies = [
   "Pillow>=10,<13",
   "pystray>=0.19.5,<1",
   "pydantic>=2.7,<3",
-  "strands-agents>=1.54,<2",
+  "strands-agents>=1.55,<2",
 ]
 
 [project.optional-dependencies]

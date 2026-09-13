@@ -14,6 +14,8 @@ from typing import Any
 
 HISTORY_SCHEMA_VERSION = 1
 HISTORY_RETENTION_LIMIT = 1000
+HISTORY_FILE_MAX_BYTES = 2 * 1024 * 1024
+PREFERENCES_FILE_MAX_BYTES = 4096
 APPLICATION_DIRECTORY_NAME = "CoreWarden"
 HISTORY_RELATIVE_PATH = Path("history") / "monitoring-history.json"
 PREFERENCES_FILENAME = "preferences.json"
@@ -65,6 +67,15 @@ SAFE_EVENT_DEFAULTS = {
     "investigation_completed": "Investigation completed",
     "investigation_failed": "Provider invocation failed; deterministic monitoring continues",
 }
+
+
+def _read_bounded_utf8(path: Path, maximum_bytes: int) -> str:
+    """Read at most one byte beyond a local-file limit before rejecting it."""
+    with path.open("rb") as handle:
+        data = handle.read(maximum_bytes + 1)
+    if len(data) > maximum_bytes:
+        raise ValueError("local file exceeded its safety limit")
+    return data.decode("utf-8")
 
 
 def utc_timestamp(value: datetime | None = None) -> str:
@@ -278,7 +289,7 @@ class HistoryStore:
         if not exists:
             return
         try:
-            document = json.loads(self.path.read_text(encoding="utf-8"))
+            document = json.loads(_read_bounded_utf8(self.path, HISTORY_FILE_MAX_BYTES))
             if (
                 not isinstance(document, dict)
                 or document.get("schema_version") != HISTORY_SCHEMA_VERSION
@@ -408,7 +419,7 @@ class LocalPreferences:
 
     def tray_notice_shown(self) -> bool:
         try:
-            document = json.loads(self.path.read_text(encoding="utf-8"))
+            document = json.loads(_read_bounded_utf8(self.path, PREFERENCES_FILE_MAX_BYTES))
         except (OSError, UnicodeError, ValueError, json.JSONDecodeError):
             return False
         return isinstance(document, dict) and document.get("tray_notice_shown") is True

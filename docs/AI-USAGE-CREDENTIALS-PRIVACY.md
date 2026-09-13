@@ -24,8 +24,8 @@ CoreWarden keeps ordinary node observation local whenever possible.
 | Monitoring: healthy steady state | Yes — local read-only checks | No |
 | Monitoring: RPC unavailable | Local check fails/records unavailable | No |
 | Monitoring: recovery | Yes — local read-only checks | No recovery model call |
-| Monitoring: new or materially changed degradation | Yes — local read-only checks | Yes — one diagnostic investigation for that degradation fingerprint |
-| Monitoring: unchanged degradation | Yes — local read-only checks | No repeated AI call for the same condition during that monitoring session |
+| Monitoring: new or materially changed degradation | Yes — local read-only checks | Eligible for one diagnostic investigation, subject to the automatic cooldown and rolling budget |
+| Monitoring: unchanged degradation | Yes — local read-only checks | No repeated AI call merely because another cycle elapsed |
 
 Provider selection is explicit. CoreWarden does not automatically fall back from OpenAI to Bedrock or from Bedrock to OpenAI.
 
@@ -37,7 +37,12 @@ OpenAI responses are requested with response storage disabled. API use is charge
 
 ## What leaves the machine
 
-Before any model provider can receive node observations, CoreWarden projects raw RPC results onto an explicit health-oriented field allow-list. Peer-identifying and endpoint data is filtered locally before model access, logs, or diagnostic evidence recording.
+Before any model provider can receive node observations, CoreWarden projects all four raw RPC
+results onto exact health-oriented field allow-lists. Unknown fields, identifying endpoints,
+incorrect types, non-finite numbers, unsupported string values, and values beyond fixed list limits
+are discarded locally. Free-form node warning text is never forwarded; a controlled marker tells
+the model only that a warning was present. The same projection runs again inside both provider tool
+paths so a custom node implementation cannot bypass the adapter boundary.
 
 CoreWarden's node RPC allow-list is fixed to:
 
@@ -68,12 +73,31 @@ RPC username/password and cookie contents are held for the running process and a
 
 ## Monitoring and local history
 
-Monitoring is off until the user starts it. The local monitor performs deterministic checks on the selected interval and only escalates to AI for a new or materially changed degraded condition. Healthy steady state, ordinary unavailability, recovery, and unchanged repeated degradation do not create repeated AI calls.
+Monitoring is off until the user starts it. The local monitor performs deterministic checks on the
+selected interval and only escalates to AI for a new or materially changed degraded condition.
+Changing sync gaps use stable severity buckets rather than exact heights. Automatic investigation
+has a global one-hour cooldown across fingerprints, at most six attempted provider calls in a
+rolling 24-hour window, and a 128-entry incident ledger. Attempts that fail still count. The GUI
+shows aggregate remaining allowance and cooldown state without raw observations. These controls
+are in memory for the running application; provider-side account budgets remain the durable cost
+limit. Manual **Run Diagnosis** remains a separate user-directed action.
+
+Healthy steady state, ordinary unavailability, recovery, and unchanged repeated degradation do not
+create repeated AI calls.
 
 Sanitized monitoring history stays on the local machine. CoreWarden has no telemetry or cloud history service.
 
 ## Cost expectations
 
-CoreWarden itself does not charge a subscription or bundle provider credits. Any OpenAI or AWS model usage belongs to the user's own provider account. The monitoring design intentionally avoids unnecessary inference by keeping healthy checks local and deduplicating unchanged degraded conditions.
+CoreWarden itself does not charge a subscription or bundle provider credits. Any OpenAI or AWS
+model usage belongs to the user's own provider account. The monitoring design intentionally avoids
+unnecessary inference by keeping healthy checks local, bucketing changing sync gaps, deduplicating
+unchanged degraded conditions, and enforcing the automatic cooldown and rolling allowance.
+
+Bedrock diagnosis itself uses a 4,096-token per-response model limit and Strands limits of six
+turns, 12,000 output tokens, and 64,000 total tokens, with a 120-second cooperative cancellation
+deadline. Results stopped by these limits are rejected rather than reported as a completed
+diagnosis. Cooperative cancellation cannot forcibly terminate an underlying operation that ignores
+the signal, so provider-side timeouts and budgets remain useful defense in depth.
 
 For the broader safety boundary, architecture, and configuration details, see the main [README](../README.md), [ARCHITECTURE.md](../ARCHITECTURE.md), and [SECURITY.md](../SECURITY.md).

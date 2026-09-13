@@ -13,6 +13,7 @@ from pathlib import Path
 from typing import Any, TypeVar
 from uuid import uuid4
 
+from corewarden.errors import RpcResponseError, RpcTransportError
 from corewarden.models import Diagnosis
 from corewarden.node import CoreNode, JsonObject
 
@@ -26,6 +27,31 @@ _SENSITIVE_KEYS = re.compile(
 )
 _AUTH_VALUE = re.compile(r"\b(?:basic|bearer)\s+[A-Za-z0-9._~+/=-]+", re.IGNORECASE)
 _URL_USERINFO = re.compile(r"(https?://)[^/@\s:]+(?::[^/@\s]*)?@", re.IGNORECASE)
+_SAFE_RUN_ERROR_CATEGORIES = {
+    "ConfigurationError": "configuration_error",
+    "CredentialStorageError": "credential_storage_error",
+    "ProviderError": "provider_error",
+    "RpcResponseError": "rpc_response_error",
+    "RpcTransportError": "rpc_transport_error",
+    "ValidationError": "validation_error",
+}
+
+
+def _observation_failure_type(exc: Exception) -> str:
+    if isinstance(exc, RpcResponseError):
+        return "rpc_response_error"
+    if isinstance(exc, RpcTransportError):
+        return "rpc_transport_error"
+    return "node_observation_error"
+
+
+def _safe_run_error(run_error: Mapping[str, str] | None) -> dict[str, str] | None:
+    if not run_error:
+        return None
+    category = _SAFE_RUN_ERROR_CATEGORIES.get(
+        run_error.get("error", ""), "diagnostic_failure"
+    )
+    return {"failure_category": category}
 
 
 @dataclass(frozen=True, slots=True)
@@ -78,8 +104,8 @@ class EvidenceRecorder:
                 {
                     "source": source,
                     "status": "error",
-                    "error_type": type(exc).__name__,
-                    "error": self.redactor.text(str(exc)),
+                    "failure_category": "node_observation_failed",
+                    "error_type": _observation_failure_type(exc),
                 }
             )
             logger.debug("Read-only evidence call failed: %s", source)
@@ -115,7 +141,7 @@ class EvidenceRecorder:
             ],
             "observations": self.observations,
             "diagnosis": diagnosis.model_dump(mode="json") if diagnosis else None,
-            "run_error": dict(run_error) if run_error else None,
+            "run_error": _safe_run_error(run_error),
         }
         safe_document = self.redactor.redact(document)
         self.output_path.parent.mkdir(parents=True, exist_ok=True)

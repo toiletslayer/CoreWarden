@@ -1,4 +1,4 @@
-CoreWarden v0.2.0 judge quickstart
+CoreWarden v0.2.1 judge quickstart
 =================================
 
 FIRST PATH — cost-free acceptance (source checkout)
@@ -33,8 +33,8 @@ SECOND PATH — packaged Windows GUI
    billed to your account. Test Node is model-free. Run Diagnosis sends only locally filtered
    diagnostic evidence to the explicitly selected provider.
 6. Optional monitoring is off by default. Healthy steady state, unavailability, recovery, and
-   unchanged repeated degradation do not invoke AI. Only a new or materially changed degraded
-   condition triggers one investigation.
+   unchanged repeated degradation do not invoke AI. A new or materially changed degraded condition
+   is eligible for investigation, subject to the global cooldown and rolling automatic-call budget.
 
 Hard safety boundary
 --------------------

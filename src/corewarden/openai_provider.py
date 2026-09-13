@@ -13,6 +13,7 @@ from pydantic import ValidationError
 from corewarden.errors import ProviderError
 from corewarden.models import Diagnosis
 from corewarden.node import CoreNode
+from corewarden.observations import project_tool_result
 
 OPENAI_MODEL = "gpt-5.6-luna"
 DEFAULT_MAX_ITERATIONS = 6
@@ -93,9 +94,9 @@ def _item_value(item: Any, name: str) -> Any:
     return getattr(item, name, None)
 
 
-def _safe_tool_failure(exc: Exception) -> dict[str, str]:
+def _safe_tool_failure() -> dict[str, str]:
     return {
-        "error": type(exc).__name__,
+        "error": "node_tool_failure",
         "message": "The fixed read-only node tool failed; treat its evidence as unavailable.",
     }
 
@@ -190,8 +191,9 @@ class OpenAIResponsesProvider:
                     raise ProviderError("OpenAI supplied unsupported tool arguments")
                 try:
                     result = handlers[name]()
-                except Exception as exc:
-                    result = _safe_tool_failure(exc)
+                    result = project_tool_result(name, result)
+                except Exception:
+                    result = _safe_tool_failure()
                 input_items.append(
                     {
                         "type": "function_call_output",

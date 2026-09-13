@@ -87,4 +87,13 @@ If **Test Node** fails:
 - if using a cookie, confirm the selected file belongs to the currently running Bitcoin II instance;
 - avoid placing credentials directly in the RPC URL.
 
+CoreWarden permits credentialed plaintext `http://` RPC only for loopback hosts such as
+`127.0.0.1`, `::1`, and `localhost`. A credentialed node on another machine must use `https://`
+so Basic credentials are encrypted in transit. RPC requests bypass environment/system proxies,
+never follow redirects, and reject response bodies larger than 4 MiB before JSON processing.
+The configured timeout is checked across opening and bounded streaming reads. Python's standard
+HTTP stack cannot cancel an already-running low-level read at an exact wall-clock instant, so its
+socket inactivity timeout remains the backstop; any response that overruns the total deadline is
+still rejected before JSON processing or provider use.
+
 The Bitcoin II defaults above are for CoreWarden's validated reference target. Other Core-derived nodes may use different data directories, ports, authentication settings, or RPC behavior and should not be assumed compatible until validated.

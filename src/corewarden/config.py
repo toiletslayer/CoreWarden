@@ -2,13 +2,58 @@
 
 from __future__ import annotations
 
+import ipaddress
+import math
 from collections.abc import Mapping
 from dataclasses import dataclass
 from os import environ
 from pathlib import Path
-from urllib.parse import urlsplit
+from urllib.parse import SplitResult, urlsplit
 
 from corewarden.errors import ConfigurationError
+
+
+def _is_loopback_host(hostname: str | None) -> bool:
+    """Return whether a URL hostname is unambiguously local to this machine."""
+    if hostname is None:
+        return False
+    normalized = hostname.rstrip(".").lower()
+    if normalized == "localhost":
+        return True
+    try:
+        return ipaddress.ip_address(normalized).is_loopback
+    except ValueError:
+        return False
+
+
+def validate_rpc_endpoint_url(rpc_url: str, *, label: str = "RPC URL") -> SplitResult:
+    """Validate the endpoint without echoing a possibly sensitive URL in errors."""
+    try:
+        parsed = urlsplit(rpc_url)
+        hostname = parsed.hostname
+        _ = parsed.port
+    except ValueError:
+        raise ConfigurationError(f"{label} must be an http:// or https:// URL") from None
+    if parsed.scheme not in {"http", "https"} or not parsed.netloc or hostname is None:
+        raise ConfigurationError(f"{label} must be an http:// or https:// URL")
+    if parsed.username or parsed.password:
+        raise ConfigurationError(
+            f"Do not embed RPC credentials in {label}; use the credential variables"
+        )
+    return parsed
+
+
+def require_safe_rpc_auth_transport(rpc_url: str) -> None:
+    """Reject Basic credentials over plaintext transports beyond loopback."""
+    parsed = validate_rpc_endpoint_url(rpc_url)
+    if parsed.scheme == "https" or (
+        parsed.scheme == "http" and _is_loopback_host(parsed.hostname)
+    ):
+        return
+    raise ConfigurationError(
+        "Authenticated non-loopback RPC endpoints must use https://; "
+        "plaintext HTTP credentials are allowed only for loopback nodes"
+    )
 
 
 @dataclass(frozen=True, slots=True)
@@ -28,13 +73,7 @@ class Settings:
         if not rpc_url:
             raise ConfigurationError("COREWARDEN_RPC_URL is required")
 
-        parsed = urlsplit(rpc_url)
-        if parsed.scheme not in {"http", "https"} or not parsed.netloc:
-            raise ConfigurationError("COREWARDEN_RPC_URL must be an http:// or https:// URL")
-        if parsed.username or parsed.password:
-            raise ConfigurationError(
-                "Do not embed RPC credentials in COREWARDEN_RPC_URL; use the credential variables"
-            )
+        validate_rpc_endpoint_url(rpc_url, label="COREWARDEN_RPC_URL")
 
         user = values.get("COREWARDEN_RPC_USER") or None
         password = values.get("COREWARDEN_RPC_PASSWORD") or None
@@ -42,13 +81,15 @@ class Settings:
             raise ConfigurationError(
                 "COREWARDEN_RPC_USER and COREWARDEN_RPC_PASSWORD must be set together"
             )
+        if user is not None:
+            require_safe_rpc_auth_transport(rpc_url)
 
         timeout_text = values.get("COREWARDEN_RPC_TIMEOUT_SECONDS", "10")
         try:
             timeout = float(timeout_text)
         except ValueError as exc:
             raise ConfigurationError("COREWARDEN_RPC_TIMEOUT_SECONDS must be a number") from exc
-        if timeout <= 0 or timeout > 300:
+        if not math.isfinite(timeout) or timeout <= 0 or timeout > 300:
             raise ConfigurationError(
                 "COREWARDEN_RPC_TIMEOUT_SECONDS must be greater than 0 and at most 300"
             )
