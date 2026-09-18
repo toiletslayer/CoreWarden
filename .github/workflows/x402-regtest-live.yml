@@ -7,31 +7,77 @@ on:
 jobs:
   regtest:
     runs-on: ubuntu-24.04
-    timeout-minutes: 20
+    timeout-minutes: 35
     steps:
       - uses: actions/checkout@v4
 
-      - name: Download and verify official CapStash v27.1.0 CLI
+      - name: Verify official CapStash v27.1.0 and document stock-regtest mining behavior
         shell: bash
         run: |
           set -euxo pipefail
           URL="https://github.com/CapStash/CapStash-Core/releases/download/v27.1.0/CapStash-27.1.0-x86_64-pc-linux-gnu-cli.tar.gz"
-          curl -fL --retry 4 --retry-delay 2 "$URL" -o "$RUNNER_TEMP/capstash.tar.gz"
-          echo "c838622ad29fbac1231263894c946d117b3110d5e24acab5bedf75e79ee954dd  $RUNNER_TEMP/capstash.tar.gz" | sha256sum -c -
-          mkdir -p "$RUNNER_TEMP/capbin"
-          tar -xzf "$RUNNER_TEMP/capstash.tar.gz" -C "$RUNNER_TEMP/capbin"
-          find "$RUNNER_TEMP/capbin" -type f -maxdepth 5 -print
-          DAEMON="$(find "$RUNNER_TEMP/capbin" -type f \( -name 'capstashd' -o -name 'CapStashd' -o -name '*stashd' \) | head -n1)"
-          CLI="$(find "$RUNNER_TEMP/capbin" -type f \( -name 'capstash-cli' -o -name 'CapStash-cli' -o -name '*stash-cli' \) | head -n1)"
-          test -n "$DAEMON"
-          test -n "$CLI"
-          chmod +x "$DAEMON" "$CLI"
-          echo "CAP_DAEMON=$DAEMON" >> "$GITHUB_ENV"
-          echo "CAP_CLI=$CLI" >> "$GITHUB_ENV"
-          "$DAEMON" --version || true
-          "$CLI" --version || true
+          curl -fL --retry 4 --retry-delay 2 "$URL" -o "$RUNNER_TEMP/capstash-official.tar.gz"
+          echo "c838622ad29fbac1231263894c946d117b3110d5e24acab5bedf75e79ee954dd  $RUNNER_TEMP/capstash-official.tar.gz" | sha256sum -c -
+          mkdir -p "$RUNNER_TEMP/official"
+          tar -xzf "$RUNNER_TEMP/capstash-official.tar.gz" -C "$RUNNER_TEMP/official"
+          OD="$RUNNER_TEMP/official/CapStashd"
+          OC="$RUNNER_TEMP/official/CapStash-cli"
+          chmod +x "$OD" "$OC"
+          "$OD" --version | head -n1
+          STOCK="$RUNNER_TEMP/stock"
+          mkdir -p "$STOCK"
+          "$OD" -regtest -datadir="$STOCK" -server=1 -rpcuser=x402 -rpcpassword=x402-test-only -daemon
+          for i in $(seq 1 30); do
+            "$OC" -regtest -datadir="$STOCK" -rpcuser=x402 -rpcpassword=x402-test-only getblockchaininfo >/dev/null 2>&1 && break
+            sleep 1
+          done
+          "$OC" -regtest -datadir="$STOCK" -rpcuser=x402 -rpcpassword=x402-test-only createwallet stock
+          SA="$("$OC" -regtest -datadir="$STOCK" -rpcuser=x402 -rpcpassword=x402-test-only -rpcwallet=stock getnewaddress stock-miner bech32)"
+          echo "STOCK_GENESIS=$("$OC" -regtest -datadir="$STOCK" -rpcuser=x402 -rpcpassword=x402-test-only getblockhash 0)"
+          echo "STOCK_DIFFICULTY=$("$OC" -regtest -datadir="$STOCK" -rpcuser=x402 -rpcpassword=x402-test-only getdifficulty)"
+          echo "STOCK_HEIGHT_BEFORE=$("$OC" -regtest -datadir="$STOCK" -rpcuser=x402 -rpcpassword=x402-test-only getblockcount)"
+          STOCK_GEN="$("$OC" -regtest -datadir="$STOCK" -rpcuser=x402 -rpcpassword=x402-test-only -rpcwallet=stock generatetoaddress 1 "$SA" 1000000)"
+          echo "STOCK_GENERATETOADDRESS_1M=$STOCK_GEN"
+          echo "STOCK_HEIGHT_AFTER=$("$OC" -regtest -datadir="$STOCK" -rpcuser=x402 -rpcpassword=x402-test-only getblockcount)"
+          "$OC" -regtest -datadir="$STOCK" -rpcuser=x402 -rpcpassword=x402-test-only stop || true
 
-      - name: Start isolated regtest node and wallet
+      - name: Build v27.1.0 with regtest-only trivial PoW
+        shell: bash
+        run: |
+          set -euxo pipefail
+          sudo apt-get update
+          sudo apt-get install -y build-essential libtool autotools-dev automake pkg-config bsdmainutils python3 libevent-dev libboost-dev libsqlite3-dev libdb-dev libdb++-dev
+          git clone --depth 1 --branch v27.1.0 https://github.com/CapStash/CapStash-Core.git "$RUNNER_TEMP/capsrc"
+          cd "$RUNNER_TEMP/capsrc"
+          python3 - <<'PY'
+          from pathlib import Path
+          p=Path("src/kernel/chainparams.cpp")
+          s=p.read_text()
+          marker="class CRegTestParams"
+          i=s.index(marker)
+          head, reg=s[:i], s[i:]
+          old='consensus.powLimit = uint256S("00000001fffe0000000000000000000000000000000000000000000000000000");'
+          new='consensus.powLimit = uint256S("7fffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff");'
+          if old not in reg:
+              raise SystemExit("regtest powLimit pattern not found")
+          reg=reg.replace(old,new,1)
+          old2='consensus.fPowNoRetargeting = true;'
+          new2='consensus.fPowNoRetargeting = false; // x402 CI only: allow DGW to select patched trivial powLimit'
+          if old2 not in reg:
+              raise SystemExit("regtest no-retarget pattern not found")
+          reg=reg.replace(old2,new2,1)
+          p.write_text(head+reg)
+          print("Applied regtest-only PoW patch")
+          PY
+          git diff -- src/kernel/chainparams.cpp
+          ./autogen.sh
+          ./configure --without-gui --disable-tests --disable-bench --with-incompatible-bdb CXXFLAGS="-O2"
+          make -j2
+          echo "CAP_DAEMON=$RUNNER_TEMP/capsrc/src/CapStashd" >> "$GITHUB_ENV"
+          echo "CAP_CLI=$RUNNER_TEMP/capsrc/src/CapStash-cli" >> "$GITHUB_ENV"
+          "$RUNNER_TEMP/capsrc/src/CapStashd" --version | head -n1
+
+      - name: Start patched isolated regtest node and wallet
         shell: bash
         run: |
           set -euxo pipefail
@@ -51,8 +97,8 @@ jobs:
           EOF
           chmod +x "$RUNNER_TEMP/capcli"
           echo "CAP_WRAPPER=$RUNNER_TEMP/capcli" >> "$GITHUB_ENV"
-          "$RUNNER_TEMP/capcli" -regtest getblockhash 0
-          "$RUNNER_TEMP/capcli" -regtest getwalletinfo
+          echo "PATCHED_GENESIS=$("$RUNNER_TEMP/capcli" -regtest getblockhash 0)"
+          echo "PATCHED_DIFFICULTY_AT_GENESIS=$("$RUNNER_TEMP/capcli" -regtest getdifficulty)"
 
       - name: Run included positive regtest harness
         shell: bash
@@ -76,4 +122,4 @@ jobs:
           echo "=== mempool ==="
           "$CAP_WRAPPER" -regtest getrawmempool true
           echo "=== debug tail ==="
-          tail -n 200 "$CAP_DATADIR/regtest/debug.log" || true
+          tail -n 120 "$CAP_DATADIR/regtest/debug.log" || true
