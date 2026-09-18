@@ -47,7 +47,7 @@ jobs:
           "$CAP_CLI" -regtest -datadir="$DATADIR" -rpcuser=x402 -rpcpassword=x402-test-only createwallet x402
           cat > "$RUNNER_TEMP/capcli" <<EOF
           #!/usr/bin/env bash
-          exec "$CAP_CLI" -datadir="$DATADIR" -rpcuser=x402 -rpcpassword=x402-test-only -rpcwallet=x402 "$@"
+          exec "$CAP_CLI" -datadir="$DATADIR" -rpcuser=x402 -rpcpassword=x402-test-only -rpcwallet=x402 "\$@"
           EOF
           chmod +x "$RUNNER_TEMP/capcli"
           echo "CAP_WRAPPER=$RUNNER_TEMP/capcli" >> "$GITHUB_ENV"
