@@ -61,18 +61,26 @@ jobs:
           if old not in reg:
               raise SystemExit("regtest powLimit pattern not found")
           reg=reg.replace(old,new,1)
-          old2='consensus.fPowNoRetargeting = true;'
-          new2='consensus.fPowNoRetargeting = false; // x402 CI only: allow DGW to select patched trivial powLimit'
-          if old2 not in reg:
-              raise SystemExit("regtest no-retarget pattern not found")
-          reg=reg.replace(old2,new2,1)
           p.write_text(head+reg)
-          print("Applied regtest-only PoW patch")
+          q=Path("src/pow.cpp")
+          ps=q.read_text()
+          old2='''if (params.fPowNoRetargeting) {
+        return pindexLast->nBits;
+    }'''
+          new2='''if (params.fPowNoRetargeting) {
+        // x402 CI only: keep a fixed trivial regtest target after the real genesis.
+        return UintToArith256(params.powLimit).GetCompact();
+    }'''
+          count=ps.count(old2)
+          if count < 1:
+              raise SystemExit("no-retarget return pattern not found")
+          q.write_text(ps.replace(old2,new2))
+          print(f"Applied regtest-only trivial PoW patch ({count} no-retarget sites)")
           PY
-          git diff -- src/kernel/chainparams.cpp
+          git diff -- src/kernel/chainparams.cpp src/pow.cpp
           ./autogen.sh
           ./configure --without-gui --disable-tests --disable-bench --with-incompatible-bdb CXXFLAGS="-O2"
-          make -j2
+          make -j"$(nproc)"
           echo "CAP_DAEMON=$RUNNER_TEMP/capsrc/src/CapStashd" >> "$GITHUB_ENV"
           echo "CAP_CLI=$RUNNER_TEMP/capsrc/src/CapStash-cli" >> "$GITHUB_ENV"
           "$RUNNER_TEMP/capsrc/src/CapStashd" --version | head -n1
